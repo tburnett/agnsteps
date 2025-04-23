@@ -1,6 +1,6 @@
 import sys
 from utilities.ipynb_docgen import show, capture
-from wtlike import WtLike, MJD, UTC
+from wtlike import WtLike, MJD, UTC, config
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -26,8 +26,10 @@ class J2333_plots:
     def bb_light_curve(self, interval=365.25, p0=0.05):
         time_bins=(0,0,interval)
         wtl = WtLike(self.source,  time_bins=time_bins); 
-        neighbor_bb = WtLike(self.neighbor,time_bins=time_bins ).bb_view()
-        self.wtl = wtl.reweighted_view(neighbor_bb)
+        if self.neighbor is not None:
+            neighbor_bb = WtLike(self.neighbor,time_bins=time_bins ).bb_view()
+            self.wtl = wtl.reweighted_view(neighbor_bb)
+        else: self.wtl = wtl
         self.bb = self.wtl.bb_view(p0=p0)
         return self.bb
 
@@ -98,7 +100,7 @@ show(f"""It quotes an analysis of _Fermi_ data for the periods:
 * 2015: MJD {mjd_range(2015)}
 * 2018: MJD {mjd_range(2018)}
 """)
-
+assert config.Config().get('keep_pixels', False), 'Need to set keep_pixels'
 self = J2333_plots()
 show(f"""## Full wtlike light-curve""")
 self.plot_bb(30, 0.05)
