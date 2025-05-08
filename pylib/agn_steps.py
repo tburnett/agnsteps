@@ -2,6 +2,7 @@ from data_setup import *
 
 show("""# Observation of discrete steps in gamma-ray light curves""")
 show_date()
+dark_theme = set_theme(['dark'])
 
 show(f"""## Load light curve data
      Note that the file `{Path(VarDB.info_file).name}`, used here was copied from SLAC's s3df,
@@ -20,38 +21,36 @@ must be at a bin boundary, the boundary position depending on the BB algorithm, 
 Ratios close to 1.0 are possibly an artifact of the BB procedure, this needs study.
 """)
 
-ass = dfx.association.values
-tss = dfx.ts.values
-names = dfx.index
 
-dd = dict()
-for name, lc, stype, ts in zip(names, lcs, ass, tss):
-    if lc is None or len(lc)!=2: continue
-    v = lc.tw.values/7
-    a,b = lc.flux.values[:,0]
-    if a*b>0:
-        dd[name] = dict(flux_ratio=b/a, time=v[0], ts=ts, association=stype)
+margin=50
+def select_single_step(dfx, margin=margin):
+    ass = dfx.association.values
+    tss = dfx.ts.values
+    names = dfx.index
+    
+    dd = dict()
+    for name, lc, stype, ts in zip(names, lcs, ass, tss):
+        if lc is None or len(lc)!=2: continue
+        v = lc.tw.values/7
+        a,b = lc.flux.values[:,0]
+        if (a*b>0) & (v[0]>=margin) & (v[1]>=margin):
+            dd[name] = dict(flux_ratio=b/a, time=v[0], t2=v[1],
+                            ts=ts, association=stype)
+    df = pd.DataFrame.from_dict(dd, orient='index') 
+    df.loc[:,'eflux'] = dfx.loc[df.index, 'eflux100']
+    return df
+    
+df = select_single_step(dfx)
 
-df = pd.DataFrame.from_dict(dd, orient='index'); 
-show(f"""Found {len(df)} candidates, with the association categories""") 
-# copy the energy flux over
-df.loc[:,'eflux'] = dfx.loc[df.index, 'eflux100']
+show(f"""Apply margin={margin} weeks: <br>Found {len(df)} candidates, with the association categories""") 
 
-def show_unique(sclass):
-    v,n = np.unique(sclass,  return_counts=True)
-    show(
-        pd.DataFrame.from_dict(
-            dict(list(zip(v,n))), orient='index',
-        )
-     )
-show_unique(df.association)
-
-
+v,n = np.unique(df.association,  return_counts=True)
+show(pd.Series(dict(list(zip(v,n))), name=''))
 
 def ratio_display(df,  ax=None):
     
     eflux = df.eflux
-    sns.set(font_scale=1.2)
+    # sns.set_theme(font_scale=1.2)
     fig, ax = plt.subplots(figsize = (12,10)) if ax is None else (ax.figure, ax)
     r = df.flux_ratio
     
@@ -69,7 +68,7 @@ def ratio_display(df,  ax=None):
 
 
 
-def ratio_vs_time(week_lim=None, fignum=1):
+def ratio_vs_time(df, week_lim=None, fignum=1):
 
     show(f"""## Steps: ratio vs. time for blazars""")
 
@@ -77,7 +76,7 @@ def ratio_vs_time(week_lim=None, fignum=1):
     keep = df.association.apply(lambda a: a in 'bll fsrq bcu'.split())
     r = df[keep].flux_ratio
     ratio_display(df[keep], ax=ax)
-    ax.plot(420, np.log10(2.60) ,'*',color='maroon', ms=25, label='PKS J2333-2343')
+    ax.plot(420, np.log10(2.60) ,'*',color='crimson', ms=40, label='PKS J2333-2343')
     
     show(fig, fignum=fignum, caption=
              """The after/before ratio of the apparent step in the flux, vs its time in Fermi weeks. 
@@ -99,6 +98,7 @@ def pulsar_only(fignum=2):
     We will compare this dataset with those for the other association categories.
 
     """)
+    plt.style.use('dark_background')
     psr = df.query('association=="psr"')
     show( ratio_display(psr), fignum=fignum) 
 
@@ -140,6 +140,7 @@ def block_2_1(fignum=3):
                 col='association',  col_wrap=3, 
                 col_order='bll fsrq bcu psr unid other'.split(),
                 height=2.5, aspect=1.5,
+                element='step', fill=False
     
                )
     for ax in plt.gcf().axes:

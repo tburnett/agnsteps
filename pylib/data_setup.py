@@ -11,18 +11,55 @@ import seaborn as sns
 from wtlike import WtLike
 from utilities.ipynb_docgen import capture_hide, show
 
+
+
 def show_date():
     import datetime
     date=str(datetime.datetime.now())[:16]
     show(f"""<h5 style="text-align:right; margin-right:15px"> {date}</h5>""")
+def show_link(name):
+    show(f'<a href="#{name}">{name}</a>')
+
+def set_theme(argv):
+    plt.rcParams['figure.figsize']=[5,3]
+    plt.rcParams['figure.dpi'] = 72
+    plt.rcParams['axes.grid'] = True
+    plt.rcParams['grid.alpha'] = 0.5
+    # sns.set_theme('notebook' if 'talk' not in argv else 'talk', font_scale=1.25) 
+    
+    sns.set_theme( 'talk', font_scale=1.) 
+    if 'paper' in argv: 
+        # sns.set_theme('paper')
+        sns.set_style('ticks')
+    if 'dark' in argv:
+        sns.set_style('darkgrid') ##?
+        plt.style.use('dark_background')
+        plt.rcParams['grid.color']='0.5'
+        # plt.rcParams['figure.facecolor']='k'
+        dark_mode=True
+    else:
+        dark_mode=False
+        sns.set_style('ticks' if 'paper' in argv else 'whitegrid')
+        plt.rcParams['figure.facecolor']='white'
+    return dark_mode
+
+# Test statistic for variability 
+def TSvar(fitvals):
+    """ fitvals: list of log-likelihood functions, one for each cell
+    Returns the test statistic for the variability of the light curve.
+    """
+    return 0 if len(fitvals)<2 else -2 * np.sum([f(1) for f in fitvals])
 
 class VarDB(OrderedDict):
     """Manage a variability data base for Fermi sources
 
     Original file location on the SLAC s3df system:
     /sdf/home/b/burnett/work/bb_light_curves/files
+
+    Note that the 2022 version as internal DataFrame objects, and cannot be read with pandas 2.
+    So the _v1 was rewritten with each light_curve as a dict
     """
-    info_file='files/source_info.pkl'
+    info_file='files/source_info_v1.pkl'
    
     def __init__(self, info_file=None, reload=False):
         info_file = Path(info_file if info_file is not None else self.info_file)
@@ -176,8 +213,21 @@ class VarDB(OrderedDict):
 
     def light_curve(self, name, ax=None, **kwargs):
 
+        """Draw a light curve plot for the source `name`
+
+        """
+        if name not in self: 
+            show(f'No light curve for {name}')
+            return None
+        if self[name]['light_curve'] is None:
+            show(f'No light curve for {name}')
+            return None
+   
         lc = self[name]['light_curve']
-        y = lc.flux.values[:,0]
+        if type(lc)==dict:
+            lc = pd.DataFrame.from_dict(lc, orient='index')
+        if len(lc)<2:
+            y = lc.flux.values[:,0]
         x, xerr = lc.t.values, lc.tw.values/2
         yerr = np.abs(np.array( list(map(lambda x: np.array([x[1],x[0]]), 
                                         lc.errors.values)))).T

@@ -1,18 +1,17 @@
 from utilities.ipynb_docgen import show,capture_hide
+from pylib.data_setup import (set_theme, show_date, show_link)
+from wtlike import simulation, WtLike, Timer
+
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
-def show_link(name):
-    show(f'<a href="#{name}">{name}</a>')
-from wtlike import simulation, WtLike, Timer
-
 import seaborn as sns
 
+set_theme(['dark'])
 show(f"""# Monte Carlo BB light curve study 
 """, id='top')
-
-sns.set()
+show_date()
 
 sim_design_thoughts= f"""---
     ## Simulation procedure step
@@ -27,7 +26,7 @@ sim_design_thoughts= f"""---
     3. After -- well after, combine as well
 
     ### Simulation
-    1. Choose a step position within the bracked, default the measured one
+    1. Choose a step position within the bracket, default the measured one
     2. For each of the bracketed cells, create a new cell with the expected flux 
     3. Run BB with the new set
 
@@ -43,7 +42,14 @@ sim_design_thoughts= f"""---
     2. Interface to BB might need tweaking--but it is only an ordered set of cells in which it 
     finds partitions.
     """
-TS = lambda df : -2 * np.sum([f(1) for f in df.fit.values])
+# Test statistic for variability 
+def TSvar(fitvals):
+    """ fitvals: list of log-likelihood functions, one for each cell
+    Returns the test statistic for the variability of the light curve.
+    """
+    return 0 if len(fitvals<2) else -2 * np.sum([f(1) for f in fitvals])
+
+TS = lambda df : -2 * np.sum([f(1) for f in df.fit.values]) if len(df)>1 else 0
 
 def generate_trials(wtl, ntrials, interval=None):
     with capture_hide():

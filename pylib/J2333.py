@@ -1,15 +1,13 @@
 import sys
 from utilities.ipynb_docgen import show, capture
 from wtlike import WtLike, MJD, UTC, config
+from pylib.data_setup import set_theme, show_date, show_link
+
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
-def show_date():
-    import datetime
-    date=str(datetime.datetime.now())[:16]
-    show(f"""<h5 style="text-align:right; margin-right:15px"> {date}</h5>""")
-# from setup import show_date
+set_theme(sys.argv)
 
 class J2333_plots:
     source= 'PKS J2333-2343'
