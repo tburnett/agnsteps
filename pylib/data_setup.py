@@ -328,7 +328,7 @@ def twodirections(bb, bbr, ax=None):
             label=f'backward {chisq(bbr.fits):4.1f}', color='red',alpha=0.5, 
            );
     font=dict(family='monospace', size=10)
-    ax.legend(prop=font).set_title(f'  Direction  $\chi^2$', prop=font)
+    ax.legend(prop=font).set_title(r'  Direction  $\chi^2$', prop=font)
     return fig
 
 def show_lightcurve(source, p0=0.05, interval=7, comment='', nocaption=False):

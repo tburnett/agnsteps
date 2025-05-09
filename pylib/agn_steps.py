@@ -1,6 +1,9 @@
 from data_setup import *
 
-show("""# Observation of discrete steps in gamma-ray light curves""")
+show("""# Observation of discrete steps in gamma-ray light curves
+     
+     By a "step" we mean a change, typically around a factor or two in flux, within a week.
+     """)
 show_date()
 dark_theme = set_theme(['dark'])
 
@@ -11,7 +14,12 @@ show(f"""## Load light curve data
      """)
 vdb = VarDB().load_cats().matchup()   
 dfx = vdb.dfx
-lcs = [vdb[uw_name]['light_curve'] for uw_name in dfx.uw_name]
+# lcs = [pd.DataFrame.from_dict(vdb[uw_name]['light_curve'],orient='index')
+#         for uw_name in dfx.uw_name]
+def make_df(x):
+    if x is None: return None
+    return pd.DataFrame.from_dict(x)
+lcs = [make_df(vdb[uw_name]['light_curve']) for uw_name in dfx.uw_name]
 
 show("""### Detect the single-steppers
 Here I select BB light curves with exactly two blocks, and record the ratio
@@ -32,7 +40,7 @@ def select_single_step(dfx, margin=margin):
     for name, lc, stype, ts in zip(names, lcs, ass, tss):
         if lc is None or len(lc)!=2: continue
         v = lc.tw.values/7
-        a,b = lc.flux.values[:,0]
+        a,b = lc.flux.values # needed after rename column [:,0]
         if (a*b>0) & (v[0]>=margin) & (v[1]>=margin):
             dd[name] = dict(flux_ratio=b/a, time=v[0], t2=v[1],
                             ts=ts, association=stype)
@@ -43,7 +51,7 @@ def select_single_step(dfx, margin=margin):
 df = select_single_step(dfx)
 
 show(f"""Apply margin={margin} weeks: <br>Found {len(df)} candidates, with the association categories""") 
-
+assert len(df)>0, 'Failed to find any?'
 v,n = np.unique(df.association,  return_counts=True)
 show(pd.Series(dict(list(zip(v,n))), name=''))
 
