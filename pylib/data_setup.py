@@ -9,7 +9,7 @@ import pandas as pd
 import seaborn as sns
 
 from wtlike import WtLike
-from utilities.ipynb_docgen import capture_hide, show
+from utilities.ipynb_docgen import capture_hide, show, show_fig
 
 
 
@@ -58,8 +58,9 @@ class VarDB(OrderedDict):
 
     Note that the 2022 version as internal DataFrame objects, and cannot be read with pandas 2.
     So the _v1 was rewritten with each light_curve as a dict
+    Now: _v3 uses all data, has poisson fits (as truples)
     """
-    info_file='files/source_info_v1.pkl'
+    info_file='files/source_info_v3.pkl'
    
     def __init__(self, info_file=None, reload=False):
         info_file = Path(info_file if info_file is not None else self.info_file)
@@ -78,7 +79,7 @@ class VarDB(OrderedDict):
         for key,value in sd.items():
             lc = value['light_curve']  
             near = value['nearby']  
-            sd[key]['nbb'] =  len(lc) if lc is not None else 0
+            sd[key]['nbb'] =  len(lc['t']) if lc is not None else 0
             sd[key]['near'] = len(near) if near is not None else 0
         self.update(sd)
         
@@ -110,7 +111,7 @@ class VarDB(OrderedDict):
         fglall = Fermi4FGL()
         fgl = fglall[fglall.r95>0].copy() # removes extended
         self.fgl_coord = SkyCoord(fgl.ra, fgl.dec, unit='deg', frame='fk5')
-        show(f'* Selected {len(fgl)} 4FGL-DR4 point sources')
+        show(f'* a {len(fgl)} 4FGL-DR4 point sources from `{fglall.filename}`')
         self.fgl = fgl
         return self
        
@@ -120,16 +121,17 @@ class VarDB(OrderedDict):
         fgl, fgl_coord = self.fgl, self.fgl_coord
         uw,  uw_coord =   self.df, self.df_coord
     
-        show = lambda x: None if not debug else show
+        def shower(arg):
+            if debug: show(arg)
         
         id_uw, _delta, _ = fgl_coord.match_to_catalog_sky(uw_coord)
         delta = _delta.deg
-        show(f"""* Matched {len(id_uw)} DR4 with the {len(uw)}  UW, of which {len(set(id_uw))} are unique. """)
+        shower(f"""* Matched {len(id_uw)} DR4 with the {len(uw)}  UW, of which {len(set(id_uw))} are unique. """)
 
         match = pd.DataFrame([id_uw, delta], index='id_uw delta'.split()).T
-        show(f'* Created match df w/ {len(match)} entries')
+        shower(f'* Created match df w/ {len(match)} entries')
         match.index.name='id_fgl'
-        show(match.head())
+        shower(match.head())
 
         match['dup'] = match.id_uw.duplicated(keep=False)
         mdup = match.query('dup==True')
@@ -137,15 +139,15 @@ class VarDB(OrderedDict):
         best_dup = pd.DataFrame(
             [g.sort_values('delta').iloc[0] for i,g in mdup.groupby('id_uw')])
         best_dup.index.name = 'id_fgl'
-        show(f"""* picked {len(best_dup)} closest of {len(mdup)} duplicates""")
+        shower(f"""* picked {len(best_dup)} closest of {len(mdup)} duplicates""")
         # best.hist('delta', bins=50);
-        show(best_dup.head())
+        shower(best_dup.head())
 
         nodup = match[match.dup==False]
-        show(f'combine {len(nodup)} nondup, with {len(best_dup)} best dups')
+        shower(f'combine {len(nodup)} nondup, with {len(best_dup)} best dups')
         dfa = pd.concat([nodup, best_dup])
-        show(dfa.head())
-        show(dfa.describe())
+        shower(dfa.head())
+        shower(dfa.describe())
         delta =dfa.delta.clip(0,0.5)
         hkw = dict(bins=np.linspace(0,0.5,26), histtype='step', log=True,lw=2)
         if debug:
@@ -154,7 +156,7 @@ class VarDB(OrderedDict):
             show(plt.gcf())
 
 
-        show(f"""## Generate table of uw sources with DR4 counterparts
+        shower(f"""## Generate table of uw sources with DR4 counterparts
         Add ...""")
         # dfa['specfunc'] = 
         dft = dfa.copy()
