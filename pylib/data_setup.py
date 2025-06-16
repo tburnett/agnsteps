@@ -78,7 +78,7 @@ class VarDB(OrderedDict):
         for key,value in sd.items():
             lc = value['light_curve']  
             near = value['nearby']  
-            sd[key]['nbb'] =  len(lc) if lc is not None else 0
+            sd[key]['nbb'] =  len(lc['tw']) if lc is not None else 0
             sd[key]['near'] = len(near) if near is not None else 0
         self.update(sd)
         
