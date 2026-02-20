@@ -104,10 +104,11 @@ class VarDB(OrderedDict):
         self.df = df = uwcat.loc[index, cols].copy()
         self.df_coord =  SkyCoord(df.glon, df.glat, unit='deg', frame='galactic') 
 
-        nbb = pd.Series(dict( [ (k,int(v['nbb']))  for k,v in self.items() ] ))
+        nbb = pd.Series(dict(  [ (k,int(v['nbb']))  for k,v in self.items() ] ))
         near = pd.Series(dict( [ (k,int(v['near']))  for k,v in self.items() ] ))
+        var = pd.Series(dict(  [ (k,int(v['variability']))  for k,v in self.items() ] ))
         df.loc[:,'nbb'] = nbb
- 
+        df.loc[:,'bbvar'] = var 
         fglall = Fermi4FGL()
         fgl = fglall[fglall.r95>0].copy() # removes extended
         self.fgl_coord = SkyCoord(fgl.ra, fgl.dec, unit='deg', frame='fk5')
@@ -160,7 +161,7 @@ class VarDB(OrderedDict):
         Add ...""")
         # dfa['specfunc'] = 
         dft = dfa.copy()
-        for col in 'ts r95 glat glon eflux100 specfunc nbb'.split():
+        for col in 'ts r95 glat glon eflux100 specfunc nbb bbvar'.split():
             dft[col] = uw.iloc[dft.id_uw][col].values
         # from 4FGL: only class1 and variability 
         for col in 'class1 variability'.split():
@@ -187,9 +188,10 @@ class VarDB(OrderedDict):
             ])
             show("""* Categorize according to the "class1" value:""")
             for k,v in categories.items():
-                print(f'   {k:5} {sum(v):6}')
+                shower(f'   {k:5} {sum(v):6}')
                 dfx.loc[v,'association'] = k
                 dfx.loc[v,'category'] = k
+
         categorizer(dft)
 
         self.dfx = dft.drop(columns='dup specfunc id_uw'.split())  

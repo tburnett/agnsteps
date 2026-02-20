@@ -1,22 +1,14 @@
-from data_setup import *
-
-show("""# Observation of steps in gamma-ray light curves
-     
-     By a "step" we mean a change, typically around a factor or two in flux, within a week.
-     """)
-show_date()
-dark_theme = set_theme(['dark'])
-
-show(f"""## Load light curve data
-     Note that the file `{Path(VarDB.info_file).name}`, used here was copied from SLAC's s3df,
-     where is was last updated on Jun  6 12:45. 
-     It can be found at `/sdf/home/b/burnett/work/bb_light_curves/files`.
-     """)
-vdb = VarDB().load_cats().matchup()   
-dfx = vdb.dfx
+import sys
+from pathlib import Path
+from pylib.data_setup import VarDB, set_theme
+from utilities.ipynb_docgen import show, show_date, show_fig
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
-def select_single_step(dfx, margin=50):
+def select_single_step(vdb, margin=50):
     show("""### Detect the single-steppers
 Here I select BB light curves with exactly two blocks, and record the ratio
 of the two levels (the steps), and the position of the transition.
@@ -24,6 +16,7 @@ The light curves were generated with a bin width of 7 days, so the "step" positi
 must be at a bin boundary, the boundary position depending on the BB algorithm, its uncertainty TBD.
 Ratios close to 1.0 are possibly an artifact of the BB procedure, this needs study.
 """)
+    dfx = vdb.dfx
     ass = dfx.association.values
     tss = dfx.ts.values
     names = dfx.index
@@ -34,87 +27,135 @@ Ratios close to 1.0 are possibly an artifact of the BB procedure, this needs stu
     
     dd = dict()
     for name, lc, stype, ts in zip(names, lcs, ass, tss):
-        if lc is None or len(lc)==0 or len(lc)>4: continue
+        if lc is None or len(lc)!=2: continue
         v = lc.tw.values/7
-        a,b = lc.flux.values # needed after rename column [:,0]
+        sh = lc.flux.values.shape
+        if sh == (2,):
+            a,b = lc.flux.values #  new
+        elif sh ==(2,2):
+            a,b = lc.flux.values[:,0] # old, with two "flux" columns
+        else:
+            raise Exception(f'Bad lc.flux shape: {sh}')
         if (a*b>0) & (v[0]>=margin) & (v[-1]>=margin):
             dd[name] = dict(flux_ratio=b/a, time=v[0], t2=v[-1],
                             ts=ts, association=stype)
     df = pd.DataFrame.from_dict(dd, orient='index') 
-    df.loc[:,'eflux'] = dfx.loc[df.index, 'eflux100']
+    df.loc[:,'log_eflux'] = np.log10(dfx.loc[df.index, 'eflux100'])
+    df.loc[:,'bbvar'] = dfx.loc[df.index, 'bbvar']
+    df.loc[:,'variability'] = dfx.loc[dfx.index, 'variability']
 
     show(f"""Apply margin={margin} weeks: <br>Found {len(df)} candidates, with the association categories""") 
     assert len(df)>0, 'Failed to find any?'
     v,n = np.unique(df.association,  return_counts=True)
     show(pd.Series(dict(list(zip(v,n))), name=''))
     return df
-    
 
-def ratio_display(df,  ax=None, **kwargs):
-    """    """
-    
-    fig, ax = plt.subplots(figsize = (12,10)) if ax is None else (ax.figure, ax)
-    r = df.flux_ratio.clip(0.1,10)
-    
-    sns.scatterplot(df, ax=ax, y=np.log10(r), 
+def ratio_display(df, margin, ax=None, **kwargs):
+
+    eflux = df.eflux
+    # sns.set_theme(font_scale=1.2)
+    fig, ax = plt.subplots(figsize = (10,8)) if ax is None else (ax.figure, ax)
+    r = df.flux_ratio
+
+    sns.scatterplot(df, ax=ax, y=np.log10(r).clip(-1,1), 
                     x='time', hue='association', 
-                    **kwargs, edgecolor='none',
-                    s=50,
+                    **kwargs, edgecolor='none', s=25
+                    # size=np.log10(eflux), sizes=(10, 150),
                 )
-    ax.set( xlabel='Step time (day)',  ylabel='Flux Ratio (log scale)')
-    ax.axhline(0, color="0.75", ls=':' )
+    ax.set(xlim=(-100,1000), xlabel='Step time (Fermi week)', 
+        ylabel='Flux Ratio (log scale)')
+    ax.axhline(0, color="orange", ls='--',  lw=1, alpha=0.5 )
     ticks = np.log10(np.array([1/8,1/4, 1/2, 1, 2, 4,8]))
     ax.set( yticks=ticks, yticklabels='1/8 1/4 1/2 1 2 4 8'.split())
+    ax.axvspan(0, margin, color='yellow', alpha=0.10)
+    end = np.mean(df.time+df.t2)
+    ax.axvspan(end-margin, end, color='yellow', alpha=0.10)
     ax.legend(loc='upper left', fontsize=12,)
     return fig
 
+def ratio_vs_time(df, dfx, margin, week_lim=None, fignum=1):
 
+    show(f"""## Steps: ratio vs. time for blazars""")
 
-
-# def ratio_vs_time(df, week_lim=None, fignum=1):
-
-#     show(f"""## Steps: ratio vs. time for blazars""")
-
-#     fig, ax = plt.subplots(figsize = (12,10))
-#     keep = df.association.apply(lambda a: a in 'bll fsrq bcu'.split())
-#     r = df[keep].flux_ratio
-#     ratio_display(df[keep], ax=ax)
-#     ax.plot(420, np.log10(2.60) ,'*',color='crimson', ms=40, label='PKS J2333-2343')
+    fig, ax = plt.subplots(figsize = (12,10))
+    keep = df.association.apply(lambda a: a in 'bll fsrq bcu'.split())
+    r = df[keep].flux_ratio
     
-#     show(fig, fignum=fignum, caption=
-#              """The after/before ratio of the apparent step in the flux, vs its time in Fermi weeks. 
-#              Colors correspond to the 4FGL-DR4 association assignment, and marker size to the energy flux.
-#              """)
+    ratio_display(df[keep], margin, ax=ax,
+                  hue_order='bll bcu fsrq'.split(), 
+                palette='cyan yellow red'.split())
 
-#     prop = lambda t: f'{100* sum(df.association==t)/ sum(dfx.association==t):.0f} %'
+    ax.plot(420, np.log10(2.60) ,'*',color='crimson', ms=40, label='PKS J2333-2343')
+    
+    show(fig, fignum=fignum, caption=
+             f"""The after/before ratio of the apparent step in the flux, vs its time in Fermi weeks. 
+             Colors correspond to the 4FGL-DR4 association assignment. The shaded areas are excluded by the 
+             {margin}-week exclusion.
+             """)
 
-#     show(f"""Notes:
-#     * The star is the location, after correction for a nearby blazar, of PKS J2333-2343. Because of that, it was not included.
-#     * There is a higher proportion of BL Lacs ({prop('bll')}) than FSRQs ({prop('fsrq')})).
-#     * There are more steps-up ({sum(r>1)}) than steps-down ({sum(r<1)}), and the up-steps concentrate, with higher flux ratios, at the end,
-#     while the fewer down-steps are similarly concentrated at the start. These can be explained by the hypothesis that we are seeing transitions 
-#     between discrete states, and the time spent in a higher state is less then the lower one. 
-#     """)
+    prop = lambda t: f'{100* sum(df.association==t)/ sum(dfx.association==t):.0f} %'
 
-# def pulsar_only(fignum=2):
-#     show(f"""## Study the pulsar set to understand BB-induced background
-#     We will compare this dataset with those for the other association categories.
+    show(f"""Notes:
+    * The star is the location, after correction for a nearby blazar, of PKS J2333-2343. Because of that, it was not included.
+    * There is a higher proportion of BL Lacs ({prop('bll')}) than FSRQs ({prop('fsrq')})).
+    * There are more steps-up ({sum(r>1)}) than steps-down ({sum(r<1)}), and the up-steps concentrate, with higher flux ratios, at the end,
+    while the fewer down-steps are similarly concentrated at the start. These can be explained by the hypothesis that we are seeing transitions 
+    between discrete states, and the time spent in a higher state is less then the lower one. 
+    """)
 
-#     """)
-#     plt.style.use('dark_background')
-#     psr = df.query('association=="psr"')
-#     show( ratio_display(psr), fignum=fignum) 
+def pulsar_only(df, margin, fignum=2):
+    show(f"""## Study the pulsar set to understand BB-induced background
+    We will compare this dataset with those for the other association categories.
 
-# def block_2_1(fignum=3):
-    show(f"""## Compare numbers of 2-block with 1
-    There are two reasons for 2-BB light curves to be 
-    related to the 1-BB ones.
+    """)
+    plt.style.use('dark_background')
+    psr = df.query('association=="psr"')
+    show( ratio_display(psr, margin), fignum=fignum) 
+
+def nbb_count_ratios(dfx):
+    """Scatter plot showing the relative frequencies of 1- and 2-block light curves for
+    each asociation type.
+    
+    """
+    def get_unique(sclass, name=''):
+        v,n = np.unique(sclass,  return_counts=True)
+        df= pd.DataFrame.from_dict(
+                dict(list(zip(v,n))), orient='index',
+            )
+        return df.rename(columns={0:name})
+
+    totals = pd.Series(dfx.groupby('association').size(), name='total')
+
+    ones, twos = dfx.query('nbb==1').copy(), dfx.query('nbb==2').copy()
+    nbb1 = get_unique(ones.association, 'nbb=1')
+    nbb2 = get_unique(twos.association, 'nbb=2')
+
+    nbbstats = pd.concat([totals, nbb1,nbb2], axis=1, )
+    # nbbstats.loc[:,'ratio'] = (nbbstats.iloc[:,1]/nbbstats.iloc[:,0]).round(2)
+    # show(nbbstats)
+    ratio1 = nbbstats.loc[:,'nbb=1'] / nbbstats.loc[:,'total']
+    ratio2 = nbbstats.loc[:,'nbb=2'] / nbbstats.loc[:,'total']
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.scatterplot(x= ratio1, y=ratio2, s=500, marker='+', color='red')
+    ax.set(xlabel='nbb=1 fraction', ylabel='nbb=2 fraction', ylim=(0,0.2), xlim=(0,0.8),
+           yticks=np.arange(0,0.21,0.05)
+           )
+    for x,y, name, lr in zip(ratio1, ratio2,ratio1.index,
+                            'lllrll' ):
+        ax.text(x, y, name, fontsize=14, ha='right' if lr=='r' else 'left', va='bottom')
+
+    return fig
+
+def block_2_1(dfx, df, fignum=3):
+    show(f"""## Compare numbers of 2-block light curves with the single blocks
+    There are two reasons for 2-BB light curves to be  related to the 1-BB ones.
     1) Background: It is a false positive generated by the
     BB algorithm. (We need to examine this possibility with a MC.)
     2) Science: The source must have been quiet for at least 8 years, compared with 15 for 
     the 1-block set. The rates must be part of same variability spectrum.
     
-    Here are the total numbers, for each of our six 
+    Here is a plot of the 1- abd 2-block fractions for each of our six 
     association classes:
     """)
     def get_unique(sclass, name=''):
@@ -128,43 +169,134 @@ def ratio_display(df,  ax=None, **kwargs):
     nbb1 = get_unique(ones.association, 'nbb=1')
     nbb2 = get_unique(twos.association, 'nbb=2')
     
-    nbbstats = pd.concat([nbb1,nbb2], axis=1, )
-    nbbstats.loc[:,'ratio'] = nbbstats.iloc[:,1]/nbbstats.iloc[:,0]
-    show(nbbstats)
+
+    show_fig(nbb_count_ratios,dfx)
     
-    show(""" The distributions of the sizes of the steps.
+    show(""" ### The distributions of the sizes of the steps.
     The pulsar one should only reflect reason 1.""")
     
     import warnings
     warnings.simplefilter("ignore", FutureWarning)
+    
     df.loc[:,'log_ratio'] = np.log10(df.flux_ratio)
-    sns.displot(df, x='log_ratio',  bins=np.linspace(-1,1,41),
+    col_order = 'bll fsrq bcu psr unid other'.split()
+    sns.displot(df, x='log_ratio', # bins=np.linspace(-1,1,41),
                 weights= 1/nbb1.loc[df.association].values.T[0],
                 col='association',  col_wrap=3, 
-                col_order='bll fsrq bcu psr unid other'.split(),
-                height=2.5, aspect=1.5,
-                element='step', fill=False
+                col_order=col_order,
+                height=2.5, aspect=1.5, color='yellow',
+                kind= 'kde', #element='step', fill=False,
     
                )
-    for ax in plt.gcf().axes:
+    for ax, col_name in zip(plt.gcf().axes, col_order):
         ax.set( xlabel='Flux ratio (log scale)', ylabel='Scaled counts') #, yscale='log')
-        ax.axvline(0, color="0.7" , )
+        ax.axvline(0, color= "0.7"  , )
         ticks = np.log10(np.array([1/8,1/4, 1/2, 1, 2, 4,8]))
+        ax.grid(color='0.5')
+        ax.text(0.1, 0.8, col_name, fontsize=14, transform=ax.transAxes)
+        ax.set(title='')
     ax.set(xlim=(-1.1,1.1),xticks=ticks, xticklabels='1/8 1/4 1/2 1 2 4 8'.split());
+    
     show(ax.figure, fignum=fignum,
-         caption="""Flux ratio histograms for each association 
+         caption="""Flux ratio KDE plots for each association 
     category. Counts are scaled by the inverse of the number of sources with nbb=1,
     so the total represents the fraction of nbb=2 to nbb=1. The pulsars are then 
     an estimate of the contribution of false positives to be applied to the others.
     """)
     show(f"""Notes:
-    * The range of the pulsar step sizes is 
-    mostly limited to be less than 2.
+    * The range of the pulsar step sizes is  mostly limited to be less than 2.
     * If the apparent pulsar steps are all spurious, its dristribution
     above shouid be a component of all the others. This does not
     appear to be the case, especially for the unid's.
     * The asymmetry between up- and down-steps is dramatically
-    different. It appears from this that the bcu's are 
+    different. It appears from this that the most of the bcu's are 
     BL Lacs, and a large proportion of the unid's are as well.
     
     """)
+
+def hist_bbvar(df):
+    """
+    Histogram of the BB variabiliy index values
+    """
+    if 'bbvar' not in df.columns:
+        raise ValueError("DataFrame does not contain 'bbvar' column.")
+    
+    fig, ax = plt.subplots(figsize=(6, 4))
+    
+    ax.hist(df.bbvar, bins=np.logspace(0, 2, 41), histtype='step', color='C0', lw=2)
+    ax.set(xscale='log', xlabel='bbvar', ylabel='count',
+           xticks=np.logspace(0, 2, 3), xticklabels=['1', '10', '100', ])
+    return fig
+
+def strongest(df):
+    show(f"""---
+    ## The 10 strongest up-steppers 
+    Look for those with a step in the middle...""")
+    bdf = df[df.association.apply(lambda a: a in 'bll fsrq bcu'.split())].sort_values('ts', ascending=False).copy()
+    bdfq = bdf.query('flux_ratio>1.5 & 200<time<600')
+    show(bdfq.head(10))
+
+    show(f"""---
+    ## The 10 strongest down-steppers 
+    Look for those with a step in the middle...""")
+    bdfd = df[df.association.apply(lambda a: a in 'bll fsrq bcu'.split())].sort_values('ts', ascending=False).copy()
+    bdfqd = bdf.query('flux_ratio<1/1.5 & 200<time<600')
+    show(bdfqd.head(10))
+
+#==============================================================================
+
+def main(data_version='v3', margin=100):
+
+    show("""# Observation of steps in gamma-ray light curves
+        
+        By a "step" we mean a change, typically around a factor or two in flux, within a week.
+        """)
+    VarDB.info_file= f'files/source_info_{data_version}.pkl'
+    set_theme(['dark'])
+    show_date()
+
+
+    show(f"""## Load light curve data
+        Note that the file `{Path(VarDB.info_file).name}`, used here was copied from SLAC's s3df,
+        where is was last updated on Jun  6 12:45. 
+        It can be found at `/sdf/home/b/burnett/work/bb_light_curves/files`.
+        """)
+
+    vdb = VarDB().load_cats().matchup()   
+    dfx = vdb.dfx
+
+    df = select_single_step(vdb, margin)
+    
+    show(f""" ##BB variabiilty index
+         Each block in the light curves was fit by maximizing the likelihoods. The a variability index, 
+         `bbvar`, was computed from the likelihod functions exacly as for the catalog. 
+         Here is a plot for the 2-block subset.
+         """)
+
+    show_fig(hist_bbvar, df, )
+
+    show("""For the following we require `bbvar>10' """)
+    df = df.query('bbvar>10').copy()
+
+    ratio_vs_time(df, dfx, margin)
+    pulsar_only(df, margin, fignum=2)
+
+  
+    block_2_1(dfx, df)
+
+    strongest(df)
+
+    show(f"""# Summary
+         
+    * We have identified a set of 2-block light curves, with steps typically around a factor of two.
+    * The steps are not symmetrically distributed in time, with the up-steps concentrated at the end of the mission, and the down-steps at the start.
+    * The distribution of step sizes for pulsars, which should be all background, is different from that for blazars, especially for the unid's.
+    * There are more BL Lacs than FSRQs among the steppers, and a large proportion of the unid's appear to be BL Lacs as well.
+    * The strongest steppers include some well known sources, and some not so well known.   
+    """)
+
+if __name__ == '__main__':
+    
+    data_version = 'v1' if 'v1' in sys.argv else 'v3'
+    
+    main(data_version)
