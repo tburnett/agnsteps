@@ -1,22 +1,18 @@
 from utilities.ipynb_docgen import show,capture_hide
 from pylib.data_setup import (set_theme, show_date, show_link)
-from wtlike import simulation, WtLike, Timer
+# from wtlike import simulation, WtLike, Timer
 from wtlike.loglike import LogLike, PoissonRep
-from wtlike.lightcurve import fit_cells
-from wtlike.bayesian import LikelihoodFitness
+from dataclasses import dataclass, asdict
+# from wtlike.lightcurve import fit_cells
+# from wtlike.bayesian import LikelihoodFitness
 
 from scipy import stats
-
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-
 import seaborn as sns
 
-set_theme(['dark'])
-show(f"""# Monte Carlo BB light curve study 
-""", id='top')
-show_date()
+
 
 sim_design_thoughts= r"""---
     ## Simulation procedure step
@@ -56,19 +52,30 @@ def TSvar(fitvals):
 
 TS = lambda df : -2 * np.sum([f(1) for f in df.fit.values]) if len(df)>1 else 0
 
-def check_step(bb, showit=True):
-    ff = bb.fits
+@dataclass
+class StepInfo:
+    time: float
+    ts: float
+    ratio: float
+    nbb: int
+    gap: float
+
+def check_step(bb_view, showit=True):
+    """ Analyze a BB "view" lightcurve 
+    """
+    ff = bb_view.fits
+    widths = ff.tw.values
     showq = show if showit else lambda x: None
     showq(f"""TSvar = {TS(ff):.1f} for {len(ff)} blocks""")
     if len(ff)==2:
         showq(f"""Single step observed at MJD {(tstep:=ff.t[0]+ff.tw[0]/2)}, 
              ratio {(ratio:=ff.fit[1].flux/ff.fit[0].flux):.2f}""")
-        return tstep, round(TS(ff),1), ratio, 2
+        return StepInfo(tstep, round(TS(ff),1), round(ratio,2), 2, 0)
     else:
         showq(f"""No single step observed, {len(ff)} blocks""")
-        return np.nan, round(TS(ff),1), np.nan, len(ff)
-    
-
+        gap=sum(widths[1:-1])
+        flux = lambda i: ff.fit[i].flux # complicated
+        return StepInfo(ff.t[0]+ff.tw[0]/2 + gap/2, round(TS(ff),1), round(flux(len(ff)-1)/flux(0),2), len(ff), gap) 
 
 def check_lightcurve(wtl):
     
@@ -96,7 +103,7 @@ class BBsim:
         step_time: time of the step, default 57196  
         """
 
-        show(f"""## Setup BB fit sims with adjusted week cells
+        show(f"""### Setup BB fit sims with adjusted week cells
             Assume step at {step_time} """)
         self.pv = pv
         self.step_time = step_time
@@ -132,7 +139,15 @@ class BBsim:
         with capture_hide():
             r.fits = fit_cells(self.pv.config, r.cells, )
         return r
-        
+    
+    def single_sim(self, seed):
+        """
+        Run a single simulation with a given seed, and return the step time and TS
+        """
+        with capture_hide():            
+            bv =self.sim_view(step_time=None, seed=seed).bb_view()
+        return check_step(bv, False)
+            
     def runit(self, step_time=None):
         """Run a simulation
         """       
@@ -140,7 +155,58 @@ class BBsim:
             bbsimview = self.sim_view(step_time)
             ret = check_step(bbsimview, showit=False)
         return ret
+    
+    @classmethod
+    def run_many(cls, pv, step_time, seeds=range(100), nproc=10):
+        """Run many simulations with different seeds, and return a DataFrame of results
+        """
+        sim = cls(pv, step_time)
 
+        if nproc > 1:
+            from multiprocessing import Pool
+            with Pool(processes=nproc) as pool:
+                results = pool.map(sim.single_sim, seeds )
+        else:
+            results = [sim.single_sim(seed) for seed in seeds]
+
+        return sim, pd.DataFrame([asdict(p) for p in results])#, columns=['tstep', 'TS', 'ratio', 'nblocks'])
+
+
+class BBsim_plots:
+    def __init__(self, sim, df_all, step):
+        """
+        """
+        self.sim = sim
+        self.df = df_all
+        self.step = step
+
+        show(f"""## Plots of the results""")
+        u = np.unique(self.df.nbb, return_counts=True)
+        show(f"""Number of blocks <br>
+         """)
+        show(pd.Series(u[1], u[0], name='instances'))
+
+    def hists(self, cut='nbb==2'):
+        """Plot the results of the simulations
+        """
+        show(f'Selecting {cut}')
+        df = self.df.query(cut)
+        
+        fig, (ax1, ax2,ax3,) = plt.subplots(ncols=3, figsize=(15,4))
+        hkw = dict( histtype='step', color='cyan', lw=2)
+        ax1.hist(df.time-self.sim.step_time, bins=np.arange(-500, 500, 25),**hkw)
+        ax1.axvline(0, color='orange', ls='--')
+        ax1.set(xlabel='step time offset')
+
+        ax2.hist(df.ts, bins=25, **hkw)
+        ax2.axvline(self.step.ts, color='orange', ls='--')
+
+        ax2.set(xlabel='Variability TS')
+
+        ax3.hist(df.ratio, bins=np.logspace(0,np.log10(4),26), **hkw)
+        ax3.axvline(self.step.ratio, color='orange', ls='--')
+        ax3.set(xlabel='Step ratio', xscale='log',xticks=[1,2,3,4], xticklabels=[1,2,3,4])
+        show(fig)    
 
 
 def p_view(self, t1, t2 ): #new_edges):

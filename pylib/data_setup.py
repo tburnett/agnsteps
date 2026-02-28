@@ -3,14 +3,9 @@ from collections import OrderedDict
 import pickle
 from astropy.coordinates import SkyCoord
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import seaborn as sns
-
 from wtlike import WtLike
 from utilities.ipynb_docgen import capture_hide, show, show_fig
-
+import pandas as pd
 
 
 def show_date():
@@ -79,11 +74,7 @@ class VarDB(OrderedDict):
         for key,value in sd.items():
             lc = value['light_curve']  
             near = value['nearby']  
-<<<<<<< HEAD
-            sd[key]['nbb'] =  len(lc['t']) if lc is not None else 0
-=======
             sd[key]['nbb'] =  len(lc['tw']) if lc is not None else 0
->>>>>>> 9ccc487c416b8a88259be3d4d0d3524075b44188
             sd[key]['near'] = len(near) if near is not None else 0
         self.update(sd)
         
