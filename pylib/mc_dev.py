@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+from wtlike import simulation, WtLike, Timer
 
 
 
@@ -65,7 +66,7 @@ def check_step(bb_view, showit=True):
     """
     ff = bb_view.fits
     widths = ff.tw.values
-    showq = show if showit else lambda x: None
+    showq = show if showit else lambda _: None
     showq(f"""TSvar = {TS(ff):.1f} for {len(ff)} blocks""")
     if len(ff)==2:
         showq(f"""Single step observed at MJD {(tstep:=ff.t[0]+ff.tw[0]/2)}, 
@@ -97,7 +98,7 @@ def check_lightcurve(wtl):
 
 class BBsim:
     """ A class to simulate a BB light curve with a step"""
-    def __init__(self, pv, step_time=57196):
+    def __init__(self, pv, step_time=57196, ):
     
         """pv: a WtLike object with cells
         step_time: time of the step, default 57196  
@@ -161,24 +162,26 @@ class BBsim:
         """Run many simulations with different seeds, and return a DataFrame of results
         """
         sim = cls(pv, step_time)
-
-        if nproc > 1:
-            from multiprocessing import Pool
-            with Pool(processes=nproc) as pool:
-                results = pool.map(sim.single_sim, seeds )
-        else:
-            results = [sim.single_sim(seed) for seed in seeds]
-
+        show(f"""* Running {len(seeds)} simulations on {nproc} processors...""")
+        with Timer() as et:
+            if nproc > 1:
+                from multiprocessing import Pool
+                with Pool(processes=nproc) as pool:
+                    results = pool.map(sim.single_sim, seeds )
+            else:
+                results = [sim.single_sim(seed) for seed in seeds]
+        show(et)
         return sim, pd.DataFrame([asdict(p) for p in results])#, columns=['tstep', 'TS', 'ratio', 'nblocks'])
 
 
 class BBsim_plots:
-    def __init__(self, sim, df_all, step):
+    def __init__(self, sim, df_all, step, interval):
         """
         """
         self.sim = sim
         self.df = df_all
         self.step = step
+        self.interval = interval
 
         show(f"""## Plots of the results""")
         u = np.unique(self.df.nbb, return_counts=True)
@@ -186,17 +189,18 @@ class BBsim_plots:
          """)
         show(pd.Series(u[1], u[0], name='instances'))
 
-    def hists(self, cut='nbb==2'):
+    def hists(self, cut='nbb==2', dtmax=40):
         """Plot the results of the simulations
         """
         show(f'Selecting {cut}')
         df = self.df.query(cut)
+        dtrange = (-dtmax, dtmax)
         
         fig, (ax1, ax2,ax3,) = plt.subplots(ncols=3, figsize=(15,4))
         hkw = dict( histtype='step', color='cyan', lw=2)
-        ax1.hist(df.time-self.sim.step_time, bins=np.arange(-500, 500, 25),**hkw)
+        ax1.hist( (df.time-self.sim.step_time)/self.interval, bins=np.arange(*dtrange, 1),**hkw)
         ax1.axvline(0, color='orange', ls='--')
-        ax1.set(xlabel='step time offset')
+        ax1.set(xlabel='step time offset (intervals)', xlim=dtrange)
 
         ax2.hist(df.ts, bins=25, **hkw)
         ax2.axvline(self.step.ts, color='orange', ls='--')
@@ -229,6 +233,43 @@ def p_view(self, t1, t2 ): #new_edges):
     r.cells = partition_cells(self.config, self.cells, new_edges)
     r.fits = fit_cells(self.config, r.cells, )
     return r
+
+class AGNstepsMC:
+    """ A class to set up the Monte Carlo simulation
+    """
+    def __init__(self, name, binsize=30, delta=900):
+        self.name = name
+        self.binsize = binsize
+        with capture_hide('Loading data, running BB, partioning...') as output:
+            self.wtl = WtLike(name,time_bins=(0,0,binsize), clear=False)
+            self.bb_full = self.wtl.bb_view()
+            self.step = check_step(self.bb_full)
+
+            range = self.step.time-delta, self.step.time+delta
+            self.partition_view = p_view(self.wtl, *range)
+            self.bb_view = self.partition_view.bb_view(reverse=False)
+        show(output)
+ 
+    def lc_plots(self):
+        show(f"""### Light curve plots""")
+        fig, (ax1, ax2) = plt.subplots(nrows=2, figsize=(12,6), sharex=True, sharey=True,)
+        self.bb_full.plot(ax=ax1,log=True, title='all bins', ylim=(0.1,10), source_name='', xlabel='')        
+        self.bb_view.plot(ax=ax2,log=True, title='partioned bins', ylim=(0.1,10), source_name='', xlabel='MJD')
+        plt.show()
+
+    def simulate(self, step_time=None):
+        """ Run a single simulation with the current setup
+        """
+        sim = BBsim(self.partition_view, step_time=self.step.time)
+        return sim.runit(step_time)
+
+    def multi_simulate(self, N=1000, nproc=10):
+        """ Run many simulations with the current setup
+        """
+        with Timer() as et:
+            bbs, df_all = BBsim.run_many(self.partition_view, self.step.time, seeds=range(N), nproc=nproc)
+        show(et)
+        return bbs, df_all
 
 
 class CellSim:
