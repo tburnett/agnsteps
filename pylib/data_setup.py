@@ -5,7 +5,9 @@ from astropy.coordinates import SkyCoord
 
 from wtlike import WtLike
 from utilities.ipynb_docgen import capture_hide, show, show_fig
+import matplotlib.pyplot as plt
 import pandas as pd
+import seaborn as sns
 
 
 def show_date():
