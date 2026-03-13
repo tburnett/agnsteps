@@ -6,6 +6,7 @@ from astropy.coordinates import SkyCoord
 from wtlike import WtLike
 from utilities.ipynb_docgen import capture_hide, show, show_fig
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
 
@@ -83,7 +84,7 @@ class VarDB(OrderedDict):
     def __repr__(self):
         return f'Collection of variability info for {len(self)} sources'
     
-    def load_cats(self):
+    def load_cats(self, fgl_version='dr4'):
 
         from utilities.catalogs import Fermi4FGL, UWcat
         show(f"""* Load uw1410 and 4FGL-DR4 info for the {len(self)} sources """)
@@ -102,11 +103,15 @@ class VarDB(OrderedDict):
         self.df_coord =  SkyCoord(df.glon, df.glat, unit='deg', frame='galactic') 
 
         nbb = pd.Series(dict(  [ (k,int(v['nbb']))  for k,v in self.items() ] ))
-        near = pd.Series(dict( [ (k,int(v['near']))  for k,v in self.items() ] ))
-        var = pd.Series(dict(  [ (k,int(v['variability']))  for k,v in self.items() ] ))
         df.loc[:,'nbb'] = nbb
+        # near = pd.Series(dict( [ (k,int(v['near']))  for k,v in self.items() ] ))
+        
+        try:
+            var = pd.Series(dict(  [ (k,int(v['variability']))  for k,v in self.items() ] ))
+        except KeyError:
+            var = np.nan
         df.loc[:,'bbvar'] = var 
-        fglall = Fermi4FGL()
+        fglall = Fermi4FGL(fgl_version)
         fgl = fglall[fglall.r95>0].copy() # removes extended
         self.fgl_coord = SkyCoord(fgl.ra, fgl.dec, unit='deg', frame='fk5')
         show(f'* a {len(fgl)} 4FGL-DR4 point sources from `{fglall.filename}`')
