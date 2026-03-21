@@ -65,7 +65,7 @@ class VarDB(OrderedDict):
         if info_file.is_file() and not reload:
             with open(info_file, 'rb') as inp:
                 sd = pickle.load(inp)
-            show(f'* Loaded wtlike-generated variability info for {len(sd)} sources from file `{info_file}`') 
+            print(f'Loaded wtlike-generated variability info for {len(sd)} sources from file `{info_file}`') 
         else:
             raise  FileNotFoundError(f'Did not find {info_file}') 
         # else:
@@ -87,7 +87,7 @@ class VarDB(OrderedDict):
     def load_cats(self, fgl_version='dr4'):
 
         from utilities.catalogs import Fermi4FGL, UWcat
-        show(f"""* Load uw1410 and 4FGL-DR4 info for the {len(self)} sources """)
+        print(f"""Load uw1410 and 4FGL-DR4 info for the {len(self)} sources """)
 
         self.uwcat = uwcat = UWcat('uw1410') #.query('ts>25 & locqual<10')
         uw_coord = SkyCoord(uwcat.ra, uwcat.dec, unit='deg', frame='fk5').galactic
@@ -114,7 +114,6 @@ class VarDB(OrderedDict):
         fglall = Fermi4FGL(fgl_version)
         fgl = fglall[fglall.r95>0].copy() # removes extended
         self.fgl_coord = SkyCoord(fgl.ra, fgl.dec, unit='deg', frame='fk5')
-        show(f'* a {len(fgl)} 4FGL-DR4 point sources from `{fglall.filename}`')
         self.fgl = fgl
         return self
        
@@ -188,7 +187,7 @@ class VarDB(OrderedDict):
                 ('unid',class1==''),
                 ('psr', np.isin(class1, ['psr', 'msp'])),
             ])
-            show("""* Categorize according to the "class1" value:""")
+
             for k,v in categories.items():
                 shower(f'   {k:5} {sum(v):6}')
                 dfx.loc[v,'association'] = k

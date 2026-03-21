@@ -1,12 +1,17 @@
 import sys
 from pathlib import Path
 from pylib.data_setup import VarDB, set_theme
-from utilities.ipynb_docgen import show, show_date, show_fig
+from utilities.ipynb_docgen import show, show_date, show_fig, capture_hide
+from wtlike import WtLike
 import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+
+def association_breakdown(df,name=''):
+    v,n = np.unique(df.association,  return_counts=True)
+    return pd.Series(dict(list(zip(v,n))),name=name)['bll fsrq bcu psr other unid'.split()]
 
 def select_single_step(vdb, margin=50, bin_width=7):
     show(f"""### Detect the single-steppers
@@ -46,48 +51,51 @@ Ratios close to 1.0 are possibly an artifact of the BB procedure, this needs stu
 
     show(f"""Apply margin={margin} weeks: <br>Found {len(df)} candidates, with the association categories""") 
     assert len(df)>0, 'Failed to find any?'
-    v,n = np.unique(df.association,  return_counts=True)
-    show(pd.Series(dict(list(zip(v,n))), name=''))
+
+    show(association_breakdown(df, name='s-s cand.'))
+    
     return df
 
 def ratio_display(df, margin, ax=None, **kwargs):
 
-    eflux = 10**df.log_eflux
+  
     # sns.set_theme(font_scale=1.2)
     fig, ax = plt.subplots(figsize = (10,8)) if ax is None else (ax.figure, ax)
     r = df.flux_ratio
+    end = np.mean(df.time+df.t2)
 
     sns.scatterplot(df, ax=ax, y=np.log10(r).clip(-1,1), 
                     x='time', hue='association', 
-                    **kwargs, edgecolor='none', s=25
-                    # size=np.log10(eflux), sizes=(10, 150),
-                )
-    ax.set(xlim=(-100,1000), xlabel='Step time (Fermi week)', 
+                    **kwargs, edgecolor='none', s=40
+                    )
+    ax.set(xlim=(0,end), #5847/7),
+            xlabel='Step time (Fermi week)', 
         ylabel='Flux Ratio (log scale)')
     ax.axhline(0, color="orange", ls='--',  lw=1, alpha=0.5 )
     ticks = np.log10(np.array([1/8,1/4, 1/2, 1, 2, 4,8]))
     ax.set( yticks=ticks, yticklabels='1/8 1/4 1/2 1 2 4 8'.split())
-    ax.axvspan(0, margin, color='yellow', alpha=0.10)
-    end = np.mean(df.time+df.t2)
-    ax.axvspan(end-margin, end, color='yellow', alpha=0.10)
-    ax.legend(loc='upper left', fontsize=12,)
+
+    ax.axvspan(0, margin, color=None, alpha=0.2, hatch='/')
+    ax.axvspan(end-margin, end, color=None, alpha=0.2, hatch='/')
+    
+    ax.legend(loc='upper left', fontsize=14,)
     return fig
 
-def ratio_vs_time(df, dfx, margin, week_lim=None, fignum=1):
-
-    show(f"""## Steps: ratio vs. time for blazars""")
+def ratio_vs_time(df, dfx, margin, week_lim=None, fignum=1, quiet=False):
+    showquiet = lambda s, **kwargs: show(s, **kwargs) if not quiet else None
+    showquiet(f"""## Steps: ratio vs. time for blazars""")
 
     fig, ax = plt.subplots(figsize = (12,10))
     keep = df.association.apply(lambda a: a in 'bll fsrq bcu'.split())
     r = df[keep].flux_ratio
     
     ratio_display(df[keep], margin, ax=ax,
-                  hue_order='bll bcu fsrq'.split(), 
-                palette='cyan yellow red'.split())
+                hue_order='bll bcu fsrq'.split(), 
+                palette='red yellow cyan'.split())
 
-    ax.plot(420, np.log10(2.60) ,'*',color='crimson', ms=20, label='PKS J2333-2343')
+    ax.plot(420, np.log10(2.60) ,'*',color='crimson',  ms=40, label='PKS J2333-2343')
     
-    show(fig, fignum=fignum, caption=
+    showquiet(fig, fignum=fignum, caption=
              f"""The after/before ratio of the apparent step in the flux, vs its time in Fermi weeks. 
              Colors correspond to the 4FGL-DR4 association assignment. The shaded areas are excluded by the 
              {margin}-week exclusion.
@@ -95,12 +103,13 @@ def ratio_vs_time(df, dfx, margin, week_lim=None, fignum=1):
 
     prop = lambda t: f'{100* sum(df.association==t)/ sum(dfx.association==t):.0f} %'
 
-    show(f"""Notes:
-    * The star is the location, after correction for a nearby blazar, of PKS J2333-2343. Because of that, it was not included.
-    * There is a higher proportion of BL Lacs ({prop('bll')}) than FSRQs ({prop('fsrq')})).
-    * There are more steps-up ({sum(r>1)}) than steps-down ({sum(r<1)}), and the up-steps concentrate, with higher flux ratios, at the end,
-    while the fewer down-steps are similarly concentrated at the start. These can be explained by the hypothesis that we are seeing transitions 
-    between discrete states, and the time spent in a higher state is less then the lower one. 
+    showquiet(f"""Notes:
+    * The star is the location, after correction for a nearby blazar, of PKS J2333-2343. 
+              Because of that, it was not initially included.
+    * The fraction BL Lacs ({prop('bll')}) is much larger than that for FSRQs ({prop('fsrq')})).
+    * There are fewer steps-up ({sum(r>1)}) than steps-down ({sum(r<1)}), and the up-steps concentrate, 
+     at the end,
+    while the fewer down-steps are similarly concentrated at the start. 
     """)
 
 def pulsar_only(df, margin, fignum=2):
@@ -238,7 +247,7 @@ def hist_bbvar(df):
     if 'bbvar' not in df.columns:
         raise ValueError("DataFrame does not contain 'bbvar' column.")
     
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(5, 3))
     
     ax.hist(df.bbvar, bins=np.logspace(0, 2, 41), histtype='step', color='C0', lw=2)
     ax.set(xscale='log', xlabel='bbvar', ylabel='count',
@@ -262,7 +271,7 @@ def strongest(df):
 
 #==============================================================================
 
-def main(data_version='v3', margin=100):
+def main(data_version='v3', margin=100, bbvar_min=10):
 
     show("""# Observation of steps in gamma-ray light curves
         
@@ -292,8 +301,8 @@ def main(data_version='v3', margin=100):
 
     show_fig(hist_bbvar, df, )
 
-    show("""For the following we require `bbvar>10' """)
-    dfss = df.query('bbvar>10').copy()
+    show(f"""For the following we require `bbvar>{bbvar_min}' """)
+    dfss = df[df.bbvar>bbvar_min].copy()
 
     ratio_vs_time(dfss, dfv, margin)
     pulsar_only(dfss, margin, fignum=2)
@@ -317,6 +326,107 @@ def main(data_version='v3', margin=100):
     except Exception as e: 
         print(f'Failed to run block_2_1:  {e}')  
         return dfv,dfss
+
+# ------------------------------------------------------------------------------
+class ThreeBlocks:
+    """ Analyze sources with three blocks, the first and last at least `margin` days long,
+    sets up a DataFrame with the fluxes, widths, and ratios of the steps.
+    """
+
+    def __init__(self, margin=700):
+    
+        self.margin = margin
+        with capture_hide(f'Selection of three-block sources with {margin}-day margins') as cap:
+            vdb = VarDB()
+            dfx = vdb.load_cats().matchup().dfx 
+            
+            def make_df(x):
+                if x is None: return None
+                return pd.DataFrame.from_dict(x)
+            lcs = [make_df(vdb[uw_name]['light_curve']) for uw_name in dfx.uw_name]
+
+            dd = dict()
+            for name, lc, stype, tx in zip(dfx.index, lcs, dfx.association, dfx.ts):
+                if lc is None or len(lc)!=3 : continue
+                if dfx.loc[name].bbvar<10: continue # bbvar cut
+                flux = lc.flux.values
+                if np.any(flux==0): continue
+                a,b,c = lc.flux.values
+                wf,_,wl = width = lc.tw.values
+                if wf<margin or wl<margin: continue
+                dd[name] = dict(flux = flux, 
+                                width=width, ts=round(tx), 
+                                flux_ratio=round(c/a,2),
+                                bump_ratio = round(2*b/(a+c),2),
+                                lc=lc,
+                                association=stype)
+                
+            self.df = df = pd.DataFrame.from_dict(dd, orient='index')  
+            df['bump_width'] = self.df.width.apply(lambda w: w[1]) 
+            df.loc[:,'log_eflux'] = np.log10(dfx.loc[df.index, 'eflux100'])
+            df.loc[:,'bbvar'] = dfx.loc[df.index, 'bbvar']
+            df.loc[:,'variability'] = dfx.loc[dfx.index, 'variability'].round(1)
+            print(f"""Created DataFrame "df" with {len(df)} rows and columns\n\t {df.columns.tolist()} """)
+        show(cap)
+
+    def bump_plot(self, query=None, ):
+        """Scatter plot of the ratio of the "bump" to the average, vs. the ratio of the increase. 
+        """
+        from matplotlib import colors
+        df = self.df.query(query) if query is not None else self.df
+        fig, ax = plt.subplots(figsize=(10,8))
+        scat = ax.scatter(df.flux_ratio.clip(0.1,10), df.bump_ratio.clip(0.1,50), s=20,
+                    c=df.bump_width, cmap='Spectral', alpha=0.7,
+                    norm=colors.LogNorm(vmin=10, vmax=4000, )
+                    )
+        ax.axhline(1, color='0.5', ls='--', )
+        ax.axvline(1, color='0.5', ls='--', )
+        plt.colorbar(scat, label='bump width (days)')
+        ax.set(xlabel='flux ratio (c/a)', ylabel='bump flux ratio (2*b/(a+c))', xscale='log', 
+                    xlim=(0.1,10), yscale='log', ylim=(0.1,60))
+        return fig
+##----------------------------------------------------------
+#              Exploratory tools
+#----------------------------------------------------------
+def get_bb_info(bb):
+    """ Return BB interval likelihood fits with 2-d (beta-free) fit also """
+    
+    def g2fit(cell):
+        from wtlike.poisson import Poisson
+        from wtlike.loglike import LogLike, Gaussian2dRep
+
+        ts = Poisson.from_function(LogLike(cell)).ts
+        r = dict(t=cell.t, tw=cell.tw, ts=round(ts,1))            
+        if ts<4:
+            r.update(flux=0, counts=cell.n, beta=np.nan, sig_beta=np.nan)
+        else:
+            r.update(Gaussian2dRep(LogLike(cell)).fit)
+        return r
+    try:
+        df_bb = bb.fluxes['t tw ts flux errors'.split()]
+        df_beta = pd.DataFrame.from_dict( 
+            dict((i, g2fit(cell)) for i,cell in bb.cells.iterrows()) ,orient='index')\
+                ['flux_beta beta sig_beta'.split()]
+        return pd.concat([df_bb, df_beta], axis=1)
+
+    except Exception as e:
+        import sys
+        print(f'SourceAnalyzer: bb 2-d fit failed: {e}', file=sys.stderr)
+        return None
+    
+def lcsetup(name, **kwargs):
+    with capture_hide(f'Light curve setup for {name}') as cap:
+        wtl = WtLike(name, time_bins=(54682.5,60821.5,30), **kwargs)
+    show(cap)
+    return wtl 
+
+def bb_display(wtl, bin_size=30, **kwargs):
+    kw = dict(log=True, ylim=(0.1,10)); kw.update(kwargs)
+    with capture_hide(f'BB processing for {wtl.source_name}, bin size {bin_size}') as cap:
+        bb = wtl.view(bin_size).bb_view()
+        bb.plot(**kw)
+    show(cap)
+   
 
 if __name__ == '__main__' and 'main' in sys.argv:
     
