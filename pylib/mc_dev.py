@@ -3,6 +3,7 @@ from pylib.data_setup import (set_theme, show_date, show_link)
 # from wtlike import simulation, WtLike, Timer
 from wtlike.loglike import LogLike, PoissonRep
 from dataclasses import dataclass, asdict
+from typing import Optional
 # from wtlike.lightcurve import fit_cells
 # from wtlike.bayesian import LikelihoodFitness
 
@@ -49,7 +50,7 @@ def TSvar(fitvals):
     """ fitvals: list of log-likelihood functions, one for each cell
     Returns the test statistic for the variability of the light curve.
     """
-    return 0 if len(fitvals<2) else -2 * np.sum([f(1) for f in fitvals])
+    return 0 if len(fitvals) < 2 else -2 * np.sum([f(1) for f in fitvals])
 
 TS = lambda df : -2 * np.sum([f(1) for f in df.fit.values]) if len(df)>1 else 0
 
@@ -97,11 +98,25 @@ def check_lightcurve(wtl):
     The upper plot has BB algorithm running forward in time, the lower reversed.""")
 
 class BBsim:
-    """ A class to simulate a BB light curve with a step"""
-    def __init__(self, pv, step_time=57196, ):
-    
-        """pv: a WtLike object with cells
-        step_time: time of the step, default 57196  
+    """Simulate step-like light curves for Bayesian Blocks studies.
+
+    The simulator is calibrated from a partitioned ``WtLike`` view containing
+    representative cells before and after a transition. New cell realizations
+    are generated with :class:`CellSim`, then optionally refit and evaluated
+    with ``check_step``.
+    """
+    def __init__(self, pv, step_time: float = 57196.0):
+
+        """Initialize simulation state.
+
+        Parameters
+        ----------
+        pv : WtLike view
+            Partitioned view with a ``cells`` table. The first and last cells
+            are used as templates for pre-step and post-step behavior.
+        step_time : float, optional
+            Transition time in MJD used by default when generating simulated
+            views.
         """
 
         show(f"""### Setup BB fit sims with adjusted week cells
@@ -114,9 +129,21 @@ class BBsim:
         self.before_sim = CellSim(first)
         self.after_sim = CellSim(last)
 
-    def sim_view(self, step_time=None, seed=None ): #new_edges):
-        """ Return a simulated view 
-    
+    def sim_view(self, step_time: Optional[float] = None, seed=None): #new_edges):
+        """Build a simulated ``WtLike`` view for a proposed step time.
+
+        Parameters
+        ----------
+        step_time : float or None
+            Step location in MJD. If ``None``, uses ``self.step_time``.
+        seed : int or None
+            Optional NumPy RNG seed for reproducibility.
+
+        Returns
+        -------
+        WtLike view
+            Copy of ``self.pv`` with simulated intermediate cells and refit
+            Poisson likelihood objects in ``fits``.
         """
         from wtlike.lightcurve import fit_cells
         if seed is not None: np.random.seed(seed)
@@ -142,15 +169,36 @@ class BBsim:
         return r
     
     def single_sim(self, seed):
-        """
-        Run a single simulation with a given seed, and return the step time and TS
+        """Run one seeded simulation and summarize detected step properties.
+
+        Parameters
+        ----------
+        seed : int
+            Random seed used to generate a reproducible realization.
+
+        Returns
+        -------
+        StepInfo
+            Summary from ``check_step`` including inferred transition time,
+            variability TS, flux ratio, block count, and interior gap width.
         """
         with capture_hide():            
             bv =self.sim_view(step_time=None, seed=seed).bb_view()
         return check_step(bv, False)
             
-    def runit(self, step_time=None):
-        """Run a simulation
+    def runit(self, step_time: Optional[float] = None):
+        """Run one simulation at a specified step time.
+
+        Parameters
+        ----------
+        step_time : float or None
+            Step location in MJD. If omitted, the default configured at
+            initialization is used.
+
+        Returns
+        -------
+        StepInfo
+            Output from ``check_step`` for the simulated view.
         """       
         with capture_hide():
             bbsimview = self.sim_view(step_time)
@@ -158,8 +206,26 @@ class BBsim:
         return ret
     
     @classmethod
-    def run_many(cls, pv, step_time, seeds=range(100), nproc=10):
-        """Run many simulations with different seeds, and return a DataFrame of results
+    def run_many(cls, pv, step_time: float, seeds=range(100), nproc=10):
+        """Run many simulations and collect summary statistics.
+
+        Parameters
+        ----------
+        pv : WtLike view
+            Partitioned view passed to :class:`BBsim`.
+        step_time : float
+            Step location in MJD used for each simulation.
+        seeds : iterable of int, optional
+            Random seeds; one simulation is run per seed.
+        nproc : int, optional
+            Number of worker processes. Values greater than 1 enable
+            multiprocessing.
+
+        Returns
+        -------
+        tuple[BBsim, pandas.DataFrame]
+            The simulator instance and a table with one row per simulation.
+            Columns correspond to ``StepInfo`` fields.
         """
         sim = cls(pv, step_time)
         show(f"""* Running {len(seeds)} simulations on {nproc} processors...""")

@@ -1,3 +1,11 @@
+"""Analysis of gamma-ray light curve steps in Fermi sources.
+
+This module detects and characterizes "steps"—sustained flux changes by factors of ~2
+occurring over weeks—in Fermi LAT gamma-ray light curves. It uses Bayesian Blocks (BB)
+to identify 2-block and 3-block light curves, computes step properties (ratio, timing),
+and stratifies findings by source association (BL Lacs, FSRQs, pulsars, etc.).
+"""
+
 import sys
 from pathlib import Path
 from pylib.data_setup import VarDB, set_theme
@@ -9,11 +17,42 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
-def association_breakdown(df,name=''):
-    v,n = np.unique(df.association,  return_counts=True)
-    return pd.Series(dict(list(zip(v,n))),name=name)['bll fsrq bcu psr other unid'.split()]
+def association_breakdown(df, name=''):
+    """Compute counts of sources in each association category.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame with an 'association' column.
+    name : str, optional
+        Series name for the result.
+
+    Returns
+    -------
+    pandas.Series
+        Counts for ['bll', 'fsrq', 'bcu', 'psr', 'other', 'unid'].
+    """
+    v, n = np.unique(df.association, return_counts=True)
+    return pd.Series(dict(list(zip(v, n))), name=name)['bll fsrq bcu psr other unid'.split()]
 
 def select_single_step(vdb, margin=50, bin_width=7):
+    """Select sources with exactly 2 BB blocks and extract step properties.
+
+    Parameters
+    ----------
+    vdb : VarDB
+        Variability database instance with loaded catalogs.
+    margin : int, optional
+        Minimum width of first/last blocks in weeks; default 50.
+    bin_width : int, optional
+        Temporal bin width in days used for the light curves; default 7.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns: flux_ratio, time (step time in weeks), t2, ts, association,
+        log_eflux, bbvar, variability.
+    """
     show(f"""### Detect the single-steppers
 Here I select BB light curves with exactly two blocks, and record the ratio
 of the two levels (the steps), and the position of the transition.
@@ -57,8 +96,24 @@ Ratios close to 1.0 are possibly an artifact of the BB procedure, this needs stu
     return df
 
 def ratio_display(df, margin, ax=None, **kwargs):
+    """Scatter plot of flux step ratios vs. step time.
 
-  
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame with columns 'flux_ratio', 'time', 't2', 'association'.
+    margin : int
+        Exclusion margin in weeks shaded in the plot.
+    ax : matplotlib.axes.Axes or None, optional
+        Target axes; creates a new figure if omitted.
+    **kwargs
+        Additional arguments forwarded to ``sns.scatterplot``.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Figure containing the scatter plot.
+    """
     # sns.set_theme(font_scale=1.2)
     fig, ax = plt.subplots(figsize = (10,8)) if ax is None else (ax.figure, ax)
     r = df.flux_ratio
@@ -82,6 +137,23 @@ def ratio_display(df, margin, ax=None, **kwargs):
     return fig
 
 def ratio_vs_time(df, dfx, margin, week_lim=None, fignum=1, quiet=False):
+    """Plot and analyze flux ratios vs. step time for blazar sources.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Step properties from ``select_single_step``.
+    dfx : pandas.DataFrame
+        Full catalog DataFrame with association and other metadata.
+    margin : int
+        Exclusion margin in weeks.
+    week_lim : tuple or None, optional
+        Time limits for the plot.
+    fignum : int, optional
+        Figure number for display.
+    quiet : bool, optional
+        If true, suppress notebook output.
+    """
     showquiet = lambda s, **kwargs: show(s, **kwargs) if not quiet else None
     showquiet(f"""## Steps: ratio vs. time for blazars""")
 
@@ -113,6 +185,17 @@ def ratio_vs_time(df, dfx, margin, week_lim=None, fignum=1, quiet=False):
     """)
 
 def pulsar_only(df, margin, fignum=2):
+    """Display flux ratio distribution for pulsar sources.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Step properties from ``select_single_step``.
+    margin : int
+        Exclusion margin in weeks.
+    fignum : int, optional
+        Figure number for display.
+    """
     show(f"""## Study the pulsar set to understand BB-induced background
     We will compare this dataset with those for the other association categories.
 
@@ -122,9 +205,17 @@ def pulsar_only(df, margin, fignum=2):
     show( ratio_display(psr, margin), fignum=fignum) 
 
 def nbb_count_ratios(dfx):
-    """Scatter plot showing the relative frequencies of 1- and 2-block light curves for
-    each asociation type.
-    
+    """Scatter plot of nbb=1 and nbb=2 fractions by source association.
+
+    Parameters
+    ----------
+    dfx : pandas.DataFrame
+        Catalog with 'nbb' and 'association' columns.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Scatter plot with association labels.
     """
     def get_unique(sclass, name=''):
         v,n = np.unique(sclass,  return_counts=True)
@@ -157,9 +248,16 @@ def nbb_count_ratios(dfx):
     return fig
 
 def block_2_1(dfv, dfss, fignum=3):
-    """
-    dfv -- the dataframe with the BB information, including the nbb column, and the association column
-    dfss -- single-step dataframe including the flux_ratio column, and the association
+    """Compare flux ratio distributions for 2-block vs. 1-block sources.
+
+    Parameters
+    ----------
+    dfv : pandas.DataFrame
+        Full catalog with 'nbb' and 'association' columns.
+    dfss : pandas.DataFrame
+        Single-step DataFrame from ``select_single_step``.
+    fignum : int, optional
+        Figure number for KDE plot display.
     """
     show(f"""## Compare numbers of 2-block light curves with the single blocks
     There are two reasons for 2-BB light curves to be  related to the 1-BB ones.
@@ -241,20 +339,41 @@ def block_2_1(dfv, dfss, fignum=3):
     """)
 
 def hist_bbvar(df):
-    """
-    Histogram of the BB variabiliy index values
+    """Histogram of Bayesian Blocks variability index (bbvar).
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame with 'bbvar' column.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Log-scale histogram of variability index values.
+
+    Raises
+    ------
+    ValueError
+        If 'bbvar' column not present.
     """
     if 'bbvar' not in df.columns:
         raise ValueError("DataFrame does not contain 'bbvar' column.")
     
     fig, ax = plt.subplots(figsize=(5, 3))
     
-    ax.hist(df.bbvar, bins=np.logspace(0, 2, 41), histtype='step', color='C0', lw=2)
+    ax.hist(df.bbvar, bins=np.logspace(0, 2, 41).tolist(), histtype='step', color='C0', lw=2)
     ax.set(xscale='log', xlabel='bbvar', ylabel='count',
            xticks=np.logspace(0, 2, 3), xticklabels=['1', '10', '100', ])
     return fig
 
 def strongest(df):
+    """Display and analyze strongest up- and down-step sources.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Single-step DataFrame with 'association', 'ts', 'flux_ratio', 'time' columns.
+    """
     show(f"""---
     ## The 10 strongest up-steppers 
     Look for those with a step in the middle...""")
@@ -272,7 +391,22 @@ def strongest(df):
 #==============================================================================
 
 def main(data_version='v3', margin=100, bbvar_min=10):
+    """Main analysis pipeline: load data, detect steps, generate diagnostic plots.
 
+    Parameters
+    ----------
+    data_version : str, optional
+        Variability database version (e.g., 'v3'); default 'v3'.
+    margin : int, optional
+        Exclusion margin in weeks for step definitions; default 100.
+    bbvar_min : int, optional
+        Minimum variability index threshold for final analysis; default 10.
+
+    Returns
+    -------
+    tuple[pandas.DataFrame, pandas.DataFrame] or None
+        On exception, returns (dfv, dfss); othewise returns ``None``.
+    """
     show("""# Observation of steps in gamma-ray light curves
         
         By a "step" we mean a change, typically around a factor or two in flux, within a short time, typically a few weeks, that is sustained for a long time, typically years.
@@ -329,8 +463,10 @@ def main(data_version='v3', margin=100, bbvar_min=10):
 
 # ------------------------------------------------------------------------------
 class ThreeBlocks:
-    """ Analyze sources with three blocks, the first and last at least `margin` days long,
-    sets up a DataFrame with the fluxes, widths, and ratios of the steps.
+    """Analyze sources with three BB blocks to detect two-step structures.
+
+    Selects sources with exactly 3 blocks, first and last blocks at least `margin`
+    weeks long, and computes step properties and flux transitions.
     """
 
     def __init__(self, margin=700):
@@ -426,6 +562,7 @@ def bb_display(wtl, bin_size=30, **kwargs):
         bb = wtl.view(bin_size).bb_view()
         bb.plot(**kw)
     show(cap)
+    return bb
    
 
 if __name__ == '__main__' and 'main' in sys.argv:

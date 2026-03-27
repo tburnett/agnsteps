@@ -1,24 +1,51 @@
+"""Utilities for loading, matching, and plotting wtlike variability products.
+
+This module provides:
+- notebook display helpers
+- source catalog loading and DR4/UW matching tools
+- convenience plotting for light curves and BB forward/reverse comparisons
+"""
+
 from pathlib import Path
 from collections import OrderedDict
 import pickle
+from typing import Any, cast
 from astropy.coordinates import SkyCoord
 
 from wtlike import WtLike
 from utilities.ipynb_docgen import capture_hide, show, show_fig
 import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties
 import numpy as np
 import pandas as pd
 import seaborn as sns
 
 
 def show_date():
+    """Render the current local date/time in notebook-friendly HTML."""
     import datetime
     date=str(datetime.datetime.now())[:16]
     show(f"""<h5 style="text-align:right; margin-right:15px"> {date}</h5>""")
+
+
 def show_link(name):
+    """Render an in-page anchor link for notebook navigation."""
     show(f'<a href="#{name}">{name}</a>')
 
+
 def set_theme(argv):
+    """Configure matplotlib/seaborn theme settings.
+
+    Parameters
+    ----------
+    argv : sequence of str
+        Option flags; supports ``paper`` and ``dark``.
+
+    Returns
+    -------
+    bool
+        ``True`` if dark mode styling was enabled.
+    """
     plt.rcParams['figure.figsize']=[5,3]
     plt.rcParams['figure.dpi'] = 72
     plt.rcParams['axes.grid'] = True
@@ -43,8 +70,17 @@ def set_theme(argv):
 
 # Test statistic for variability 
 def TSvar(fitvals):
-    """ fitvals: list of log-likelihood functions, one for each cell
-    Returns the test statistic for the variability of the light curve.
+    r"""Compute variability test statistic from per-cell log-likelihood terms.
+
+    Parameters
+    ----------
+    fitvals : sequence
+        Callable fit objects where each element supports ``f(1)``.
+
+    Returns
+    -------
+    float
+        Variability statistic $-2\sum f_i(1)$, or 0 for fewer than 2 cells.
     """
     return 0 if len(fitvals)<2 else -2 * np.sum([f(1) for f in fitvals])
 
@@ -85,14 +121,26 @@ class VarDB(OrderedDict):
         return f'Collection of variability info for {len(self)} sources'
     
     def load_cats(self, fgl_version='dr4'):
+        """Load UW and 4FGL catalogs and align them to this database index.
+
+        Parameters
+        ----------
+        fgl_version : str, optional
+            Fermi catalog release tag passed to ``Fermi4FGL``.
+
+        Returns
+        -------
+        VarDB
+            ``self`` for chaining.
+        """
 
         from utilities.catalogs import Fermi4FGL, UWcat
         print(f"""Load uw1410 and 4FGL-DR4 info for the {len(self)} sources """)
 
         self.uwcat = uwcat = UWcat('uw1410') #.query('ts>25 & locqual<10')
-        uw_coord = SkyCoord(uwcat.ra, uwcat.dec, unit='deg', frame='fk5').galactic
-        uwcat.loc[:,'glat'] = uw_coord.b.deg
-        uwcat.loc[:,'glon'] = uw_coord.l.deg
+        uw_coord = SkyCoord(uwcat.ra, uwcat.dec, unit='deg', frame='fk5').transform_to('galactic')
+        uwcat.loc[:, 'glat'] = np.asarray(cast(Any, uw_coord).spherical.lat.deg, dtype=float)
+        uwcat.loc[:, 'glon'] = np.asarray(cast(Any, uw_coord).spherical.lon.deg, dtype=float)
         uwcat.loc[:,'nickname'] = uwcat.index
         uwcat.loc[:,'r95'] = 2.45 * np.sqrt(uwcat.a*uwcat.b)*uwcat.systematic
         uwcat.index = uwcat.jname
@@ -118,6 +166,20 @@ class VarDB(OrderedDict):
         return self
        
     def matchup(self, debug=False, save_to=None):
+        """Match 4FGL sources to UW sources and build a merged feature table.
+
+        Parameters
+        ----------
+        debug : bool, optional
+            If true, emits intermediate tables and diagnostic histograms.
+        save_to : str or path-like or None, optional
+            If provided, write the resulting table to CSV.
+
+        Returns
+        -------
+        VarDB
+            ``self`` with ``self.dfx`` populated.
+        """
         if not hasattr(self, 'fgl'): self.load_cats()
         
         fgl, fgl_coord = self.fgl, self.fgl_coord
@@ -150,11 +212,15 @@ class VarDB(OrderedDict):
         dfa = pd.concat([nodup, best_dup])
         shower(dfa.head())
         shower(dfa.describe())
-        delta =dfa.delta.clip(0,0.5)
-        hkw = dict(bins=np.linspace(0,0.5,26), histtype='step', log=True,lw=2)
+        delta = np.clip(dfa.delta.to_numpy(dtype=float), 0.0, 0.5)
+        has_dup = dfa.dup.to_numpy(dtype=bool)
+        bins = np.linspace(0, 0.5, 26).tolist()
         if debug:
-            plt.hist(delta[dfa.dup==True],hatch='////', label='had dup', **hkw);
-            plt.hist(delta[dfa.dup==False],  **hkw);plt.legend()
+            plt.hist(delta[has_dup], bins=bins, histtype='step', log=True, lw=2,
+                     hatch='////', label='had dup')
+            plt.hist(delta[~has_dup], bins=bins, histtype='step', log=True, lw=2,
+                     label='no dup')
+            plt.legend()
             show(plt.gcf())
 
 
@@ -201,6 +267,13 @@ class VarDB(OrderedDict):
         return self
 
     def add_fft_info(self, ):
+        """Extract and cache strongest FFT-peak summaries for available sources.
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame indexed by source name with selected peak information.
+        """
         def fmax(v):
             vdf = pd.DataFrame((v['fft_peaks']))
             if len(vdf)==0 or len(vdf)>4:
@@ -231,8 +304,11 @@ class VarDB(OrderedDict):
         lc = self[name]['light_curve']
         if type(lc)==dict:
             lc = pd.DataFrame.from_dict(lc, orient='index')
-        if len(lc)<2:
-            y = lc.flux.values[:,0]
+        flux_values = lc.flux.values
+        y = np.array([
+            fv[0] if hasattr(fv, '__len__') and not isinstance(fv, (str, bytes)) else fv
+            for fv in flux_values
+        ], dtype=float)
         x, xerr = lc.t.values, lc.tw.values/2
         yerr = np.abs(np.array( list(map(lambda x: np.array([x[1],x[0]]), 
                                         lc.errors.values)))).T
@@ -242,20 +318,42 @@ class VarDB(OrderedDict):
         kw = dict( ylim=(0.05,20), yscale='log') #,yticks=[0.1,1,10], yticklabels='0.1 1 10'.split())
         kw.update(kwargs)
         ax.set(**kw)
-        ylim= kw.get('ylim', None) 
-        if ylim is not None:
-            y = y.clip(*ylim)
-        ax.errorbar(x,y.clip(*ylim), yerr=yerr,xerr=xerr, 
+        ylim = kw.get('ylim', None)
+        if isinstance(ylim, tuple) and len(ylim) == 2:
+            y_plot = np.clip(y, float(ylim[0]), float(ylim[1]))
+        else:
+            y_plot = y
+        ax.errorbar(x, y_plot, yerr=yerr, xerr=xerr,
                     fmt='.', color='maroon', lw=2);
         ax.text(0.95, 0.95, str(name), transform=ax.transAxes, 
                 fontsize=10, va='top',ha='right')
         
         x = np.append(x-xerr, [x[-1]+xerr[-1]]);
-        y = np.append(y, y[-1])
+        y = np.append(y_plot, y_plot[-1])
         ax.step(x, y, color='maroon', where='post', lw=1, )
         return fig
     
     def multi_lc(self, names, ncols=5, row_height=2, fig_width=15, **kwargs):
+        """Plot multiple source light curves on a shared subplot grid.
+
+        Parameters
+        ----------
+        names : sequence
+            Source names to draw.
+        ncols : int, optional
+            Number of subplot columns.
+        row_height : float, optional
+            Height of each subplot row in inches.
+        fig_width : float, optional
+            Total figure width in inches.
+        **kwargs
+            Forwarded to ``Axes.set`` for each panel.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            Figure containing the panel grid.
+        """
 
         nrows = (len(names)+ncols-1)//ncols
         fig, axx = plt.subplots(ncols=ncols,  nrows=nrows, 
@@ -271,13 +369,27 @@ class VarDB(OrderedDict):
         return fig
     
     def select_nearby(self, uw_name:str, radius:float=5)->pd.DataFrame:
-        """
-        Return uwcat entries
+        """Return nearby UW catalog entries around a source.
+
+        Parameters
+        ----------
+        uw_name : str
+            UW source identifier.
+        radius : float, optional
+            Search radius in degrees.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Nearby entries sorted by separation and annotated with variability.
         """
         skycoord = lambda info: SkyCoord(info.glon, info.glat, unit='deg', frame='galactic')
         sk = skycoord(self.uwcat.loc[uw_name])
-        
-        nearby = self.uwcat.select_cone(sk,radius).sort_values('sep')#['jname ts sep'.split()]
+
+        cone = self.uwcat.select_cone(sk, int(radius))
+        if cone is None:
+            return pd.DataFrame()
+        nearby = cone.sort_values('sep')#['jname ts sep'.split()]
         
         def good_source(uw_name):
             if uw_name not in self: return False
@@ -293,9 +405,27 @@ class VarDB(OrderedDict):
 chisq = lambda df : -2 * np.sum([f(1) for f in df.fit.values])
 
 def lc_plot(lcf, name='', ax=None, color='maroon', label=None, **kwargs):
-    """Draw a light curve plot
+    """Draw a light-curve panel from a wtlike flux table.
 
-    lcf -- a "fluxes" DataFrame 
+    Parameters
+    ----------
+    lcf : pandas.DataFrame
+        Flux DataFrame accepted by ``wtlike.lightcurve.LCplotInfo``.
+    name : str, optional
+        Source label shown in the upper-right corner.
+    ax : matplotlib.axes.Axes or None, optional
+        Target axes; if omitted, a new figure/axes is created.
+    color : str, optional
+        Primary line/errorbar color.
+    label : str or None, optional
+        Legend label for this curve.
+    **kwargs
+        Additional axis properties forwarded to ``Axes.set``.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Figure containing the rendered panel.
     """
     from wtlike.lightcurve import LCplotInfo        
     lc_info = LCplotInfo(lcf)
@@ -305,25 +435,43 @@ def lc_plot(lcf, name='', ax=None, color='maroon', label=None, **kwargs):
     kw.update(kwargs)
     ax.set(**kw)
     ax.axhline(1, color='0.5', ls='--')
-    ylim= kw.get('ylim', None) 
+    ylim = kw.get('ylim', None)
     
     x,y,yerr,xerr = lc_info.errorbars
-    if ylim is not None:
-        y = y.clip(*ylim)
-        
-    ax.errorbar(x,y.clip(*ylim), yerr=yerr,#xerr=xerr, 
+    if isinstance(ylim, tuple) and len(ylim) == 2:
+        y_plot = np.clip(y, float(ylim[0]), float(ylim[1]))
+    else:
+        y_plot = y
+
+    ax.errorbar(x, y_plot, yerr=yerr,#xerr=xerr,
                 fmt='o', color=color, lw=2, label=label);
     ax.text(0.95, 0.95, str(name), transform=ax.transAxes, 
             fontsize=10, va='top',ha='right')    
     x = np.append(x-xerr, [x[-1]+xerr[-1]]);
-    y = np.append(y, y[-1])
+    y = np.append(y_plot, y_plot[-1])
     ax.step(x, y, color=color, where='post', lw=2, )
     if label is not None: ax.legend()
     return fig
     
 def twodirections(bb, bbr, ax=None):
+    """Overlay forward and reverse Bayesian Block fits on one axes.
 
-    fig, ax = plt.subplots(figsize=(8,2.5))  if ax is None else (ax.figues, ax)   
+    Parameters
+    ----------
+    bb : object
+        Forward-time BB view with a ``fits`` attribute.
+    bbr : object
+        Reverse-time BB view with a ``fits`` attribute.
+    ax : matplotlib.axes.Axes or None, optional
+        Target axes; if omitted, create a new figure.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Figure containing the combined comparison plot.
+    """
+
+    fig, ax = plt.subplots(figsize=(8,2.5))  if ax is None else (ax.figure, ax)
     lc_plot(bb.fits, ax=ax,  ylim=(0.3,3), 
             yticks=[0.25,0.5,1,2,4], yticklabels='1/4 1/2 1 2 4'.split(),
             label=f'forward  {chisq(bb.fits):4.1f}', color='green',alpha=0.5, 
@@ -332,11 +480,27 @@ def twodirections(bb, bbr, ax=None):
             yticks=[0.25,0.5,1,2,4], yticklabels='1/4 1/2 1 2 4'.split(),
             label=f'backward {chisq(bbr.fits):4.1f}', color='red',alpha=0.5, 
            );
-    font=dict(family='monospace', size=10)
-    ax.legend(prop=font).set_title(r'  Direction  $\chi^2$', prop=font)
+    font = FontProperties(family='monospace', size=10)
+    legend = ax.legend(prop=font)
+    legend.set_title(r'  Direction  $\chi^2$')
     return fig
 
 def show_lightcurve(source, p0=0.05, interval=7, comment='', nocaption=False):
+    """Generate and display forward/reverse BB light-curve comparison.
+
+    Parameters
+    ----------
+    source : str or WtLike
+        Source name to load, or an existing ``WtLike`` instance.
+    p0 : float, optional
+        BB false-positive threshold passed to ``bb_view``.
+    interval : int, optional
+        Time-bin interval (days) for the temporary view.
+    comment : str, optional
+        Extra markdown text displayed under the section title.
+    nocaption : bool, optional
+        If true, suppresses figure caption text.
+    """
     if type(source)==str:
         with capture_hide(f'Setup for {source}') as out:
             wtl = WtLike(source)
