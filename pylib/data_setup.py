@@ -12,8 +12,9 @@ import pickle
 from typing import Any, cast
 from astropy.coordinates import SkyCoord
 
-from wtlike import WtLike
 from utilities.ipynb_docgen import capture_hide, show, show_fig
+from wtlike import WtLike
+
 import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 import numpy as np

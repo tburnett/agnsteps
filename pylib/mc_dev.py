@@ -1,5 +1,7 @@
+import os
+
 from utilities.ipynb_docgen import show,capture_hide
-from pylib.data_setup import (set_theme, show_date, show_link)
+from pylib.data_setup import (set_theme, show_date, show_link, show_fig)
 # from wtlike import simulation, WtLike, Timer
 from wtlike.loglike import LogLike, PoissonRep
 from dataclasses import dataclass, asdict
@@ -9,6 +11,7 @@ from typing import Optional
 
 from scipy import stats
 import numpy as np
+np.set_printoptions(legacy='1.25') # avoid annoying "np.float64(...)"
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -119,7 +122,7 @@ class BBsim:
             views.
         """
 
-        show(f"""### Setup BB fit sims with adjusted week cells
+        show(f"""### Setup BB fit sims with cell partitioning
             Assume step at {step_time} """)
         self.pv = pv
         self.step_time = step_time
@@ -206,7 +209,8 @@ class BBsim:
         return ret
     
     @classmethod
-    def run_many(cls, pv, step_time: float, seeds=range(100), nproc=10):
+    def run_many(cls, pv, step_time: float, seeds=range(100), 
+                 nproc=10, cache='files/bbsim/cache_00.pkl'):
         """Run many simulations and collect summary statistics.
 
         Parameters
@@ -220,6 +224,9 @@ class BBsim:
         nproc : int, optional
             Number of worker processes. Values greater than 1 enable
             multiprocessing.
+        cache : str or None, optional
+            Path to a file for caching results. If the file exists, cached results are loaded.
+            If None, caching is disabled.
 
         Returns
         -------
@@ -227,7 +234,18 @@ class BBsim:
             The simulator instance and a table with one row per simulation.
             Columns correspond to ``StepInfo`` fields.
         """
+        from datetime import datetime
+        from pathlib import Path
         sim = cls(pv, step_time)
+        pkl_path = Path(cache)
+        if cache and pkl_path.exists():
+            file_date = datetime.fromtimestamp(pkl_path.stat().st_mtime)
+            show(f"""* Loading cached results from `{cache}`, last modified: {file_date:%Y-%m-%d %H:%M:%S}""")
+            df_all = pd.read_pickle(cache)
+            return sim, df_all
+        if cache and not pkl_path.exists():
+            os.makedirs(os.path.dirname(pkl_path), exist_ok=True)
+
         show(f"""* Running {len(seeds)} simulations on {nproc} processors...""")
         with Timer() as et:
             if nproc > 1:
@@ -237,7 +255,11 @@ class BBsim:
             else:
                 results = [sim.single_sim(seed) for seed in seeds]
         show(et)
-        return sim, pd.DataFrame([asdict(p) for p in results])#, columns=['tstep', 'TS', 'ratio', 'nblocks'])
+        df = pd.DataFrame([asdict(p) for p in results])#
+        if cache:
+            pd.to_pickle(df, cache)
+            show(f"""* Cached results saved to `{cache}`""")
+        return sim, df#, columns=['tstep', 'TS', 'ratio', 'nblocks'])
 
 
 class BBsim_plots:
@@ -264,7 +286,8 @@ class BBsim_plots:
         
         fig, (ax1, ax2,ax3,) = plt.subplots(ncols=3, figsize=(15,4))
         hkw = dict( histtype='step', color='cyan', lw=2)
-        ax1.hist( (df.time-self.sim.step_time)/self.interval, bins=np.arange(*dtrange, 1),**hkw)
+        offset = ((df.time-self.sim.step_time)/self.interval).clip(*dtrange)
+        ax1.hist(offset, bins=np.arange(*dtrange, 1)-0.5, **hkw)
         ax1.axvline(0, color='orange', ls='--')
         ax1.set(xlabel='step time offset (intervals)', xlim=dtrange)
 
