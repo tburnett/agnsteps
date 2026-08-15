@@ -9,13 +9,14 @@ from typing import Optional
 # from wtlike.lightcurve import fit_cells
 # from wtlike.bayesian import LikelihoodFitness
 
+from pylib.cell import Cell, CDFinverter
 from scipy import stats
 import numpy as np
 np.set_printoptions(legacy='1.25') # avoid annoying "np.float64(...)"
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-from wtlike import simulation, WtLike, Timer
+from wtlike import WtLike, Timer
 
 
 
@@ -99,6 +100,7 @@ def check_lightcurve(wtl):
     bbr.plot(ax=ax2, **plot_kw)
     show(fig, caption=f"""BB-generated light curves for {wtl.source_name} with weekly binning. 
     The upper plot has BB algorithm running forward in time, the lower reversed.""")
+
 
 class BBsim:
     """Simulate step-like light curves for Bayesian Blocks studies.
@@ -366,11 +368,12 @@ class CellSim:
     """
 
     def __init__(self, incell, rgen = None):
-        """incell: a cell object for calibration
+        """incell: a cell object used as a template for the simulation
         """
         w = incell.w
         self.S, self.B = incell.S, incell.B
         self.N = len(w)
+        
         self.rgen = rgen
 
         self.poiss_fit = PoissonRep(LogLike(incell))
@@ -384,26 +387,31 @@ class CellSim:
         self.q = np.array( list(q) + [q[-1] + delta])
         self.yq = cdf.evaluate(q)
 
-    
+    @property
+    def alpha(self):
+        return self.flux-1
 
     def __repr__(self):
         return f"CellSim: S={self.S:.0f}, B={self.B:.0f}, N={self.N}, poiss={self.poiss_fit}" 
-    
-    def __call__(self, cell, inplace=False):
+
+
+
+    def __call__(self, cell, *, alpha=None, inplace=False):
         """ Return a simulated version of the cell with a new set of weights.
         Flux corresponds to the input model
         """
+        if alpha is not None:
+            raise ValueError("alpha not yet supported")
         simcell = cell.copy() if not inplace else cell
-        # poisson sample the number of weights, with mean = flux*cell.S+cell.B 
+        # poisson sample the number of weights
         # expected number, using flux from the setup cell. Use with Poisson
-        with pd.option_context('mode.chained_assignment', None): # to ignore warning
-            mu = self.flux*cell.S+cell.B 
-            simcell.w = self._weight_gen(
-                stats.uniform.rvs(
-                    size=stats.poisson.rvs(mu, random_state=self.rgen),
-                    random_state=self.rgen))
-            simcell.n = len(simcell.w)
-        return simcell    
+        # with pd.option_context('mode.chained_assignment', None): # to ignore warning
+        mu = cell.S * self.N/self.S
+        size=stats.poisson.rvs(mu, random_state=self.rgen)
+        simcell.w = self._weight_gen(
+            stats.uniform.rvs( size=size,  random_state=self.rgen))
+        simcell.n = size
+        return Cell(simcell)    
         
     def _weight_gen(self, rgen):
         """Return sampled weight distribution 
@@ -438,15 +446,13 @@ class CellSim:
 
             """
     @classmethod
-    def plot_cdf(cls, cell, ax=None, **kwargs):
+    def plot_cdf(cls, cell, ax=None, label=None, **kwargs):
         """ Plot the CDF of the weights
         """
         sf = cls(cell)
         fig, ax = plt.subplots(figsize=(5, 4)) if ax is None else (ax.figure, ax)
-        ax.plot(sf.q[:-1], sf.yq, label='CDF')
+        ax.plot(sf.q[:-1], sf.yq, label=label or 'CDF')
         ax.set(xlabel='Weight', ylabel='CDF', title='CDF of Weights',
                xscale='log',xlim=(None,1), ylim=(0,1), **kwargs)
         ax.legend()
         return fig    
-
-        
