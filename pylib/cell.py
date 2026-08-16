@@ -18,7 +18,7 @@ class CDFinverter:
             The weights for which to invert the cumulative distribution function.
         """
         from scipy import stats
-
+        self.Nw = len(w)
         cdf = stats.ecdf(w).cdf
         q = cdf.quantiles
         self.q = np.array( list(q), dtype=np.float32)
@@ -37,26 +37,25 @@ class CDFinverter:
         """
         return self.q[np.searchsorted(self.yq, probs)].astype(np.float32)
 
-    def plot(self, *, ax=None, label=None, **kwargs):
+    def plot(self, *, ax=None,  **kwargs):
         """ Plot the CDF of the weights
         """
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots(figsize=(5, 4)) if ax is None else (ax.figure, ax)
-        ax.plot(self.q, self.yq, label=label )
-        ax.set(xlabel='Weight', ylabel=label , title=kwargs.get('title', 'CDF of Weights'),
+        ax.plot(self.q, self.yq)
+        ax.set(xlabel='Weight', ylabel='Cumulative Distribution' , title=kwargs.get('title', ''),
                xscale='log',xlim=(None,1), ylim=(0,1), **kwargs)
         return fig   
 
     def multi_plot(self):
-        """Plots of the cumulative weight distribution and scatter 
-        and scatter plot ofeight counts.
+        """Left: the cumulative weight distribution; Right: the scatter plot of weight values vs. weight counts.
         """
         import matplotlib.pyplot as plt
         fig, (ax1,ax2) = plt.subplots(ncols=2, figsize=(10, 5), 
-                        gridspec_kw={'width_ratios': [1, 1.5], "wspace": 0.5})
+                        gridspec_kw={'width_ratios': [1, 1.5], "wspace": 0.3})
         self.plot(ax=ax1, )
-        ax2.scatter(self.q, np.diff(np.insert(self.yq * len(self.q), 0, 0)), marker='o', s=5)
+        ax2.scatter(self.q, np.diff(np.insert(self.yq * self.Nw, 0, 0)), marker='o', s=5)
         ax2.set(xscale='log', xlabel='Weight values', ylabel='Counts', yscale='log')
         return fig
 
